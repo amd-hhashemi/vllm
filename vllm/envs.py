@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     VERBOSE: bool = False
     VLLM_SYNC_SERVER_ACCUM_REQUESTS: int = 1
     VLLM_SYNC_SERVER_ENGINE_STEPS_BETWEEN_POLLS: int = 1
-    VLLM_MOE_PADDING: bool = True
+    VLLM_MOE_PADDING: bool = False
 
     VLLM_MOE_MFMASWIZZLE: bool = True
 
@@ -251,7 +251,7 @@ environment_variables: Dict[str, Callable[[], Any]] = {
 
     # Pad the weight for moe kernel or not
     "VLLM_MOE_PADDING":
-    lambda: bool(int(os.getenv("VLLM_MOE_PADDING", "1"))),
+    lambda: bool(int(os.getenv("VLLM_MOE_PADDING", "0"))),
 }
 
 # end-env-vars-definition

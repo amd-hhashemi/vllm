@@ -405,14 +405,9 @@ def fused_experts(hidden_states: torch.Tensor,
                   a1_scale: Optional[torch.Tensor] = None,
                   a2_scale: Optional[torch.Tensor] = None):
     # Check constraints.
-<<<<<<< HEAD
     #print("hidenSize:", hidden_states.shape)
     #print("hidenSize:", w1.shape[2])
-    assert hidden_states.shape[1] == w1.shape[2], "Hidden size mismatch"
-=======
-    assert hidden_states.shape[
-        1] == w1.shape[2] - padding_size, "Hidden size mismatch"
->>>>>>> main
+    assert hidden_states.shape[1] == w1.shape[2] - padding_size, "Hidden size mismatch"
     assert topk_weights.shape == topk_ids.shape, "topk shape mismatch"
     assert hidden_states.is_contiguous(), "Hidden_states must be contiguous"
     assert w1.is_contiguous(), "Expert weights1 must be contiguous"
@@ -496,8 +491,10 @@ def fused_experts(hidden_states: torch.Tensor,
         #print("w1Shape:",w1.shape)
         
         #env VLLM_MOE_MFMASWIZZLE does this swizzle on init
-        '''
-        if m_blck_sz >= 16 :
+        w1_ = w1
+        w2_ = w2
+        if not envs.VLLM_MOE_MFMASWIZZLE :
+          if m_blck_sz >= 16 :
             w1_ = torch.clone(w1)
             w1_ = w1_.view(w1.shape[0], w1.shape[1]//16, 16, w1.shape[2]//128, 16, 8);
             w1_ = w1_.permute(0, 1, 4, 3, 2, 5)
@@ -508,14 +505,11 @@ def fused_experts(hidden_states: torch.Tensor,
             w2_ = w2_.permute(0, 1, 4, 3, 2, 5)
             w2_ = w2_.contiguous()
             w2_ = w2_.view(w2.shape[0],w2.shape[1],w2.shape[2]);
-        else :
-            w1_ = w1
-            w2_ = w2
-        '''
+       
         #print(w1_)
 
         invoke_mega_fused_moe_kernel(hidden_states,
-                            w1,
+                            w1_,
                             intermediate_cache1,
                             topk_weights,
                             topk_ids,
@@ -533,7 +527,7 @@ def fused_experts(hidden_states: torch.Tensor,
         #print("-----------------------------")
            
         invoke_mega_fused_moe_kernel(intermediate_cache2,
-                            w2,
+                            w2_,
                             intermediate_cache3,
                             topk_weights,
                             topk_ids,
