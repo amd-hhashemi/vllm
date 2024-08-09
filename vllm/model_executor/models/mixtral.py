@@ -182,6 +182,7 @@ class MixtralMoE(nn.Module):
 
     def process_weights_after_loading(self):
         if not self.use_fp8:
+<<<<<<< HEAD
             if envs.VLLM_MOE_MFMASWIZZLE: 
                 #print("SWIZZLING WEIGHTS:")
                 #print(self.w13_weight.shape)
@@ -206,6 +207,18 @@ class MixtralMoE(nn.Module):
                 w2_ = w2_.contiguous()
                 self.w2_weight = nn.Parameter(w2_, requires_grad=False)
                 return
+=======
+            if envs.VLLM_MOE_PADDING:
+                self.w13_weight = nn.Parameter(F.pad(self.w13_weight.data,
+                                                     (0, 128), "constant", 0),
+                                               requires_grad=False)
+                torch.cuda.empty_cache()
+                self.w2_weight = nn.Parameter(F.pad(self.w2_weight.data,
+                                                    (0, 128), "constant", 0),
+                                              requires_grad=False)
+                torch.cuda.empty_cache()
+            return
+>>>>>>> main
 
         # If checkpoint is fp16, quantize here.
         if not self.quant_config.is_checkpoint_fp8_serialized:
