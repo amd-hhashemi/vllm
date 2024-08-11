@@ -2305,11 +2305,11 @@ bool PCML = true;//(K * M_in > 32*1024);
   int TUC = (THRDS * UNRL * A_CHUNK);
   uint32_t kBase = 0;
   //find biggest k size that fits in LDS
-  uint32_t _kFit = (32*1024)/M_BLOCK;
+  uint32_t kFit = (32*1024)/M_BLOCK;
   //kFit = (kFit%TWC==0) ? kFit : (kFit-kFit%TWC+TWC); //round up to multiple of TUC
-  _kFit = (_kFit%TUC==0) ? _kFit : (_kFit-_kFit%TUC); //round down to multiple of TUC
+  kFit = (kFit%TUC==0) ? kFit : (kFit-kFit%TUC); //round down to multiple of TUC
   //if (kFit == 0) kFit = TUC;
-  _kFit = min(_kFit, K);
+  kFit = min(kFit, K);
 
 #ifdef USEMFMA
     using float4_ = __attribute__( (__vector_size__(4 * sizeof(float)) )) float;
@@ -2336,24 +2336,13 @@ bool PCML = true;//(K * M_in > 32*1024);
     for (uint32_t e = (blockIdx.x % ETILE) * M_BLOCK; e < num_tokens_post_padded[0]; e+=M_BLOCK*ETILE) { 
     kBase = 0;
     
-    int num_m = 0;
 #pragma unroll M_BLOCK
     for (uint32_t m=0; m<M_BLOCK; m++) {
 	// get the list of Ms corresponding to this M_BLOCK
         offs_token[m] = sorted_token_ids[e+m];
         token_mask[m] = offs_token[m] < num_valid_tokens;
-	if (token_mask[m]) num_m++;
     }
-
-    //num_m = max(num_m, 8);
-    //int kFit = _kFit * (M_BLOCK / num_m); // how much of A[] fits LDS, given these active rows?
-    int kFit = _kFit;
     
-    if ((M_BLOCK / 8) >= num_m) { kFit *= 8; num_m = M_BLOCK/8; }
-    else if ((M_BLOCK / 4) >= num_m) { kFit *= 4; num_m = M_BLOCK/4; }
-    else if ((M_BLOCK / 2) >= num_m) { kFit *= 2; num_m = M_BLOCK/2; }
-    else num_m = M_BLOCK;
-
     //set the expert for this M_BLOCK
     off_experts = expert_ids[e/M_BLOCK];
 
@@ -2388,19 +2377,16 @@ bool PCML = true;//(K * M_in > 32*1024);
                     if (kOff >= kFit) break;
 #ifdef USEMFMA
                     uint32_t k_in = kBase + (offs_token[m]/top_k) * K + kOff;
-                    uint32_t k_ot =         m * kFit + kOff; 
+                    uint32_t k_ot =         m * K + kOff; // yes, K should be kFit here. but we'lltranspose this below anyway
                     // Transpose A for MFMAs
-	            uint32_t k_in_x = (k_ot / A_CHUNK) % (kFit / A_CHUNK);
-	            uint32_t k_in_y = (k_ot / A_CHUNK) / (kFit / A_CHUNK);
-		    uint32_t k_blk = k_in_x / ((kFit / (M_BLOCK/num_m)) / A_CHUNK);
-                    uint32_t k_ot_x = (k_in_x / mfmaTILEn) * mfmaTILEn + (k_in_y % num_m) + k_blk * num_m;
-                    uint32_t k_ot_y = (k_in_y / num_m) * num_m + (k_in_x % mfmaTILEn);
+	            uint32_t k_in_x = (k_ot / A_CHUNK) % (K / A_CHUNK);
+	            uint32_t k_in_y = (k_ot / A_CHUNK) / (K / A_CHUNK);
+                    uint32_t k_ot_x = (k_in_x / mfmaTILEn) * mfmaTILEn + (k_in_y % mfmaTILEn);
+                    uint32_t k_ot_y = (k_in_y / mfmaTILEn) * mfmaTILEn + (k_in_x % mfmaTILEn);
                     
-	            // k_ot_y is 0-15, so its leading dimension is original kFit
-	            k_ot = (k_ot_y * ((kFit / (M_BLOCK/num_m)) / A_CHUNK) + k_ot_x) * A_CHUNK; 
+	            k_ot = (k_ot_y * (kFit / A_CHUNK) + k_ot_x) * A_CHUNK;
 
                     *((bigType*)(&s[k_ot])) = *((bigType*)(&A[k_in]));
-		    //*((bigType*)(&s[k_ot])) = {__float2half(1), __float2half(1),__float2half(1),__float2half(1),__float2half(1),__float2half(1),__float2half(1),__float2half(1)};//*((bigType*)(&A[k_in]));
 		    //}
 #else
                     //int m = threadIdx.x % M_BLOCK;
@@ -2446,13 +2432,10 @@ bool PCML = true;//(K * M_in > 32*1024);
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
-	int kBlkO = (k_-kBase) / (kFit/(M_BLOCK/num_m));
-	int kBlkI = (k_-kBase) % (kFit/(M_BLOCK/num_m));
-        //if (k_ >= K) break;
+        if (k_ >= K) break;
         for (int m = 0; m < M_BLOCK; m++) 
 	{
-          //bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-          bigA[m][k2] = *((const bigType*)(&(s[kBlkI + m*(kFit/(M_BLOCK/num_m)) + kBlkO * num_m*A_CHUNK])));
+          bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
 	}
       }
 #pragma unroll
@@ -2544,12 +2527,10 @@ bool PCML = true;//(K * M_in > 32*1024);
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
-       	int kBlkO = (k_-kBase) / (kFit/(M_BLOCK/num_m));
-	int kBlkI = (k_-kBase) % (kFit/(M_BLOCK/num_m));
+        if (k_ >= K) break;
         for (int m = 0; m < M_BLOCK/4; m++) 
 	{
-          //bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-          bigA[m][k2] = *((const bigType*)(&(s[kBlkI + m*(kFit/(M_BLOCK/num_m)) + kBlkO * num_m*A_CHUNK])));
+          bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
 	}
       //}
 //#pragma unroll
@@ -2576,19 +2557,11 @@ bool PCML = true;//(K * M_in > 32*1024);
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
-        //if (k_ >= K) break;
-        //for (int m = M_BLOCK/4; m < M_BLOCK/2; m++) 
-	//{
-        //  bigA[m-M_BLOCK/4][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	//}
-        int kBlkO = (k_-kBase) / (kFit/(M_BLOCK/num_m));
-	int kBlkI = (k_-kBase) % (kFit/(M_BLOCK/num_m));
+        if (k_ >= K) break;
         for (int m = M_BLOCK/4; m < M_BLOCK/2; m++) 
 	{
-          //bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-          bigA[m-M_BLOCK/4][k2] = *((const bigType*)(&(s[kBlkI + m*(kFit/(M_BLOCK/num_m)) + kBlkO * num_m*A_CHUNK])));
+          bigA[m-M_BLOCK/4][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
 	}
-
       //}
 //#pragma unroll
       //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
@@ -2613,20 +2586,11 @@ bool PCML = true;//(K * M_in > 32*1024);
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
-        //if (k_ >= K) break;
-        //for (int m = M_BLOCK/2; m < 3*M_BLOCK/4; m++) 
-	//{
-        //  bigA[m-M_BLOCK/2][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	//}
-        int kBlkO = (k_-kBase) / (kFit/(M_BLOCK/num_m));
-	int kBlkI = (k_-kBase) % (kFit/(M_BLOCK/num_m));
-        for (int m = M_BLOCK/2; m < 3*M_BLOCK/3; m++) 
+        if (k_ >= K) break;
+        for (int m = M_BLOCK/2; m < 3*M_BLOCK/4; m++) 
 	{
-          //bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-          bigA[m-M_BLOCK/2][k2] = *((const bigType*)(&(s[kBlkI + m*(kFit/(M_BLOCK/num_m)) + kBlkO * num_m*A_CHUNK])));
+          bigA[m-M_BLOCK/2][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
 	}
-
-
       //}
 //#pragma unroll
       //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
@@ -2652,19 +2616,11 @@ bool PCML = true;//(K * M_in > 32*1024);
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
-        //if (k_ >= K) break;
-        //for (int m = 3*M_BLOCK/4; m < M_BLOCK; m++) 
-	//{
-        //  bigA[m-3*M_BLOCK/4][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	//}
-        int kBlkO = (k_-kBase) / (kFit/(M_BLOCK/num_m));
-	int kBlkI = (k_-kBase) % (kFit/(M_BLOCK/num_m));
+        if (k_ >= K) break;
         for (int m = 3*M_BLOCK/4; m < M_BLOCK; m++) 
 	{
-          //bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-          bigA[m-3*M_BLOCK/4][k2] = *((const bigType*)(&(s[kBlkI + m*(kFit/(M_BLOCK/num_m)) + kBlkO * num_m*A_CHUNK])));
+          bigA[m-3*M_BLOCK/4][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
 	}
-
       //}
 //#pragma unroll
       //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
