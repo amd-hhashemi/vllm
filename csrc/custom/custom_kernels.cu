@@ -2249,32 +2249,37 @@ bool PCML = true;//(K * M_in > 32*1024);
   }
 
   int ETILE = (CuCount * WvPrGrp ) / (N/YTILE); // bump up etile to fill machine
-  if (ETILE < 1) ETILE = 1;                //TODO: what is best default min ETILE? 
-  if (M_in >= 128) ETILE = min(M_in/64, 15); // Heuristic: Add an ETILE for every 64 Ms
+
+  if (ETILE < 1) {  // if already more work than machine, then lets set ETILE for parallelsim...                                                                                                        //Heuristic: How many times is first expert repeated.
+	    //           We will use this to optimize column parallelism
+	    int e1 = expert_ids[0]; int ecntr = 1; 
+	    while(e1 == expert_ids[ecntr++]);
+	    ETILE = min(ecntr, 64);
+  }    
 
   const int num_tblk = num_tokens_post_padded[0] / M_BLOCK;
   
   // its worth spending time trying to load balance for this num_tokens...
-  if ((CuCount/(ETILE*2) > 0) && (num_tblk>0))// TODO: make sure all overflow/inf conditions are avoided 
+  if ((CuCount/(ETILE*2) > 0) && (ETILE>1) && (num_tblk>0))// TODO: make sure all overflow/inf conditions are avoided 
   {
     int nPrRnd0 = ((CuCount/(ETILE))*WvPrGrp)*YTILE; 
     int nRnds0 = (N + nPrRnd0 - 1 ) / nPrRnd0; 
     int tRnds0 = (num_tblk + (ETILE) - 1) / (ETILE);
     int rnds0 = nRnds0 * tRnds0;
 
-    int nPrRnd1n = ((CuCount/(ETILE/2))*WvPrGrp)*YTILE; 
+    int nPrRnd1n = ((CuCount/(ETILE-1))*WvPrGrp)*YTILE; 
     int nRnds1n = (N + nPrRnd1n - 1 ) / nPrRnd1n; 
-    int tRnds1n = (num_tblk + (ETILE/2) - 1) / (ETILE/2);
+    int tRnds1n = (num_tblk + (ETILE-1) - 1) / (ETILE-1);
     int rnds1n = nRnds1n * tRnds1n;
 
-    int nPrRnd1p = ((CuCount/(ETILE*2))*WvPrGrp)*YTILE; 
+    int nPrRnd1p = ((CuCount/(ETILE+1))*WvPrGrp)*YTILE; 
     int nRnds1p = (N + nPrRnd1p - 1 ) / nPrRnd1p; 
-    int tRnds1p = (num_tblk + (ETILE*2) - 1) / (ETILE*2);
+    int tRnds1p = (num_tblk + (ETILE+1) - 1) / (ETILE+1);
     int rnds1p = nRnds1p * tRnds1p;
     
     int etl = ETILE;
-    if (rnds0 > rnds1n)  { etl = ETILE/2; rnds0 = rnds1n; }
-    if (rnds0 > rnds1p)  { etl = ETILE*2; rnds0 = rnds1p; }
+    if (rnds0 > rnds1n)  { etl = ETILE-1; rnds0 = rnds1n; }
+    if (rnds0 > rnds1p)  { etl = ETILE+1; rnds0 = rnds1p; }
     ETILE = etl;
   }
 
@@ -2383,8 +2388,14 @@ bool PCML = true;//(K * M_in > 32*1024);
 	            uint32_t k_in_y = (k_ot / A_CHUNK) / (K / A_CHUNK);
                     uint32_t k_ot_x = (k_in_x / mfmaTILEn) * mfmaTILEn + (k_in_y % mfmaTILEn);
                     uint32_t k_ot_y = (k_in_y / mfmaTILEn) * mfmaTILEn + (k_in_x % mfmaTILEn);
-                    
 	            k_ot = (k_ot_y * (kFit / A_CHUNK) + k_ot_x) * A_CHUNK;
+
+                    //optimize above
+                    /*uint32_t k_in_x = (k_ot >> 3) % (K >> 3);
+                    uint32_t k_in_y = (k_ot / K);
+                    uint32_t k_ot_x = (k_in_x & ~0x0F) | (k_in_y & 0x0F);
+                    uint32_t k_ot_y = (k_in_y & ~0x0F) | (k_in_x & 0x0F);
+                    k_ot = k_ot_y * kFit + (k_ot_x << 3);*/
 
                     *((bigType*)(&s[k_ot])) = *((bigType*)(&A[k_in]));
 		    //}
