@@ -315,6 +315,7 @@ void LLGemmZZ(void* in_a, void* in_b, void* out_c, const int M, const int K,
 
 #define DTYPE half
 
+// This version targets cases where A[] fits LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void 
 __launch_bounds__(WvPrGrp*THRDS)
@@ -451,10 +452,6 @@ wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
         if (k_ >= K) break;
 
-        // if (k_ >= K) break;
-        // bool skip = (k_ >= K);
-        // bool dummy = (k_ >= K);
-
         const half* B_ = &B[(n + 0) * K + k_];
         bigB0[k2].h8 = (loadnt((half8*)(&B_[0 * K])));
         //----------------------------------------------------
@@ -568,9 +565,8 @@ if (YTILE >= 8)
           asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:31 bound_ctrl:0"
               : "=v"(sum[m][y])
               : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-       }
-    }
-
+      }
+    } 
     if (threadIdx.x == 63) {
       for (int m = 0; m < M; m++) {
         for (int i = 0; i < YTILE; i++) {
@@ -581,10 +577,6 @@ if (YTILE >= 8)
     }
 
     n += CuCount * WvPrGrp * YTILE;
-
-    // if (threadIdx.x == 0)
-    // n = atomicAdd(((unsigned int*)(C)), YTILE);
-    // n = __shfl(n, 0, 64);
 
     // Check whether there will be fragmenation!
     // This will happen only for the last wave!
@@ -598,7 +590,7 @@ if (YTILE >= 8)
   }
 }
 
-
+// This version targets cases where A[] marginally exceeds LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void 
 __launch_bounds__(WvPrGrp*THRDS)
@@ -736,10 +728,6 @@ wvSpltK_hf_(const int K, const int N, const DTYPE* B,
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
         if (k_ >= K) break;
 
-        // if (k_ >= K) break;
-        // bool skip = (k_ >= K);
-        // bool dummy = (k_ >= K);
-
         const half* B_ = &B[(n + 0) * K + k_];
         bigB0[k2].h8 = (loadnt((half8*)(&B_[0 * K])));
         //----------------------------------------------------
@@ -866,10 +854,6 @@ if (YTILE >= 8)
 
     n += CuCount * WvPrGrp * YTILE;
 
-    // if (threadIdx.x == 0)
-    // n = atomicAdd(((unsigned int*)(C)), YTILE);
-    // n = __shfl(n, 0, 64);
-
     // Check whether there will be fragmenation!
     // This will happen only for the last wave!
     if (n < N && (n + YTILE) >= N) {
@@ -883,7 +867,7 @@ if (YTILE >= 8)
 }
 
 
-
+// This version targets big A[] cases, where it is much larger than LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void 
 __launch_bounds__(WvPrGrp*THRDS)
@@ -1063,10 +1047,6 @@ wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
         if (k_ >= K) break;
 
-        // if (k_ >= K) break;
-        // bool skip = (k_ >= K);
-        // bool dummy = (k_ >= K);
-
         const half* B_ = &B[(n + 0) * K + k_];
         bigB0[k2].h8 = (loadnt((half8*)(&B_[0 * K])));
         //----------------------------------------------------
@@ -1207,10 +1187,6 @@ if (YTILE >= 8)
     n += CuCount * WvPrGrp * YTILE;
     kBase = 0;
 
-    // if (threadIdx.x == 0)
-    // n = atomicAdd(((unsigned int*)(C)), YTILE);
-    // n = __shfl(n, 0, 64);
-
     // Check whether there will be fragmenation!
     // This will happen only for the last wave!
     if (n < N && (n + YTILE) >= N) {
@@ -1229,66 +1205,50 @@ void wvSpltK_(void* in_a, void* in_b, void* out_c, const int M_in,
               const int K_in, const int N_in, cudaStream_t stream,
               const int CuCount = 0) {
   dim3 grid(CuCount);
-  dim3 block(64/*THRDS*/, 16/*WvPrGrp*/);
   half* af4 = reinterpret_cast<half*>(in_a);
   const half* bf4 = reinterpret_cast<const half*>(in_b);
   auto* c = reinterpret_cast<half*>(out_c);
+
+  #define WVSPLTK(_WvPrGrp, _YTILEs, _YTILEm, _YTILEb, _UNRLs, _UNRLm, _UNRLb, _N) {\
+      dim3 block(64, _WvPrGrp); \
+      /*wvSpltK_hf:<int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>*/ \
+      if ((K_in*N_in <= 32 * 1024) && (M_in % _YTILEs == 0)) { \
+          wvSpltK_hf_sml_<64,_YTILEs,_WvPrGrp,8,_UNRLs,_N><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount); \
+      } \
+      else if (K_in*N_in <= 32 * 1024 * 1.2) { \
+          wvSpltK_hf_<64,_YTILEm,_WvPrGrp,8,_UNRLm,_N><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount); \
+      } \
+      else { \
+          wvSpltK_hf_big_<64,_YTILEb,_WvPrGrp,8,_UNRLb,_N><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount); \
+      } \
+  }
+
+
   switch (N_in) {
-    case 1:
-      if ((K_in <= 32 * 1024) && (M_in % 2 == 0)) {
-        wvSpltK_hf_sml_<64,2,16,8,2,1><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                       CuCount);
-      } else {
-        wvSpltK_hf_<64,2,16,8,2,1><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                   CuCount);
-      }
+    case 1: 
+      if (CuCount < 100)
+	      WVSPLTK(16, 2, 2, 2, 2, 2, 2, 1) // MI308
+      else 
+	      WVSPLTK(12,  4, 4, 4, 2, 2, 2, 1) // MI300
       break;
     case 2:
-      wvSpltK_hf_<64,2,16,8,2,2><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
+      if (CuCount < 100)
+	      WVSPLTK(16, 2, 2, 2, 2, 2, 2, 2) // MI308
+      else 
+	      WVSPLTK(12,  4, 4, 4, 2, 2, 2, 2) // MI300
       break;
     case 3:
-      if ((K_in*N_in <= 32 * 1024) && (M_in %4 == 0))
-          wvSpltK_hf_sml_<64,4,16,8,1,3><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
-      else if (K_in*N_in <= 32 * 1024 * 1.5)
-          wvSpltK_hf_<64,7,16,8,1,3><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
-      else
-          wvSpltK_hf_big_<64,7,16,8,1,3><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                CuCount);
+      if (CuCount < 100)
+	      WVSPLTK(16, 4, 7, 7, 1, 1, 1, 3) // MI308
+      else 
+	      WVSPLTK(12,  4, 7, 7, 1, 1, 1, 3) // MI300
       break;
     case 4:
-      if ((K_in*N_in <= 32 * 1024) && (M_in % 4 == 0)) {
-          wvSpltK_hf_sml_<64,4,16,8,1,4><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
-      }
-      else if (K_in*N_in <= 32 * 1024 * 1.5) {
-          wvSpltK_hf_<64,7,16,8,1,4><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
-      }
-      else {
-          wvSpltK_hf_big_<64,6,16,8,1,4><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
-      }
-
+      if (CuCount < 100)
+	      WVSPLTK(16, 4, 7, 7, 1, 1, 1, 4) // MI308
+      else 
+	      WVSPLTK(12,  4, 7, 7, 1, 1, 1, 4) // MI300
       break;
-    case 5:
-      if ((K_in*N_in <= 32 * 1024) && (M_in % 8 == 0)) {
-          wvSpltK_hf_sml_<64,8,16,8,1,5><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
-      }
-      else if (K_in*N_in <= 32 * 1024 * 1.5){
-	  //printf("mdm5(%d,%d) \n", M_in, K_in);
-          wvSpltK_hf_<64,7,16,8,1,5><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
-      }
-      else {
-          wvSpltK_hf_big_<64,2,16,8,2,5><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c,
-                                                 CuCount);
-      }
-
-       break;
     default:
       throw std::runtime_error("Unsupported N value: " + std::to_string(M_in) +
                                "," + std::to_string(K_in) + "," +
