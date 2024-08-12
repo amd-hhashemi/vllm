@@ -1,7 +1,13 @@
+
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <stdexcept>
 #include <algorithm>
+
+#if defined(__HIPCC__) && \
+    (defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__))
+  #define __HIP__MI300__
+#endif
 
 constexpr int WARP_SIZE = 64;
 
@@ -315,6 +321,7 @@ void LLGemmZZ(void* in_a, void* in_b, void* out_c, const int M, const int K,
 
 #define DTYPE half
 
+#if defined(__HIP__MI300__)  // TODO: Add NAVI support
 // This version targets cases where A[] fits LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void 
@@ -589,7 +596,16 @@ if (YTILE >= 8)
     //}
   }
 }
+#else  // !defined(__HIP__MI300__) TODO: Add NAVI support
+template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
+__global__ void wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
+		                                   const DTYPE* __restrict__ A, DTYPE* C,
+						                                      const int CuCount) {
+	  assert(false);
+}
+#endif  // defined(__HIP__MI300__) TODO: Add NAVI support
 
+#if defined(__HIP__MI300__)  // TODO: Add NAVI support
 // This version targets cases where A[] marginally exceeds LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void 
@@ -866,7 +882,16 @@ if (YTILE >= 8)
   }
 }
 
+#else  // !defined(__HIP__MI300__) TODO: Add NAVI support
+template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
+__global__ void wvSpltK_hf_(const int K, const int N, const DTYPE* B,
+		                                   const DTYPE* __restrict__ A, DTYPE* C,
+						                                      const int CuCount) {
+	  assert(false);
+}
+#endif  // defined(__HIP__MI300__) TODO: Add NAVI support
 
+#if defined(__HIP__MI300__)  // TODO: Add NAVI support
 // This version targets big A[] cases, where it is much larger than LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void 
@@ -1197,9 +1222,15 @@ if (YTILE >= 8)
       n = startColumn;
     }
   }
-
-
 }
+#else  // !defined(__HIP__MI300__) TODO: Add NAVI support
+template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
+__global__ void wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
+		                                   const DTYPE* __restrict__ A, DTYPE* C,
+						                                      const int CuCount) {
+	  assert(false);
+}
+#endif  // defined(__HIP__MI300__) TODO: Add NAVI support
 
 void wvSpltK_(void* in_a, void* in_b, void* out_c, const int M_in,
               const int K_in, const int N_in, cudaStream_t stream,
