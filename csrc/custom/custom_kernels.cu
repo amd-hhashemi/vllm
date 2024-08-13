@@ -318,18 +318,16 @@ void LLGemmZZ(void* in_a, void* in_b, void* out_c, const int M, const int K,
 
 /////////////////////////////////////////////
 
-
 #define DTYPE half
 
 #if defined(__HIP__MI300__)  // TODO: Add NAVI support
 // This version targets cases where A[] fits LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
-__global__ void 
-__launch_bounds__(WvPrGrp*THRDS)
-wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
-                               const DTYPE* __restrict__ A, DTYPE* C,
-                               const int CuCount) {
-  using half8 = __attribute__((__vector_size__((A_CHUNK/2) * sizeof(float)))) float;
+__global__ void __launch_bounds__(WvPrGrp* THRDS)
+    wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
+                    const DTYPE* __restrict__ A, DTYPE* C, const int CuCount) {
+  using half8 =
+      __attribute__((__vector_size__((A_CHUNK / 2) * sizeof(float)))) float;
   union bigType {
     DTYPE h[A_CHUNK];
     float f[A_CHUNK / 2];
@@ -350,8 +348,8 @@ wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
   //----------------------------------------------------
   // Computation of columns that need to be committed to memory!
   //----------------------------------------------------
-  //uint32_t commitColumn[YTILE];
-  //for (uint32_t i = 0; i < YTILE; i++) {
+  // uint32_t commitColumn[YTILE];
+  // for (uint32_t i = 0; i < YTILE; i++) {
   //  commitColumn[i] = 1;
   //}
 
@@ -364,7 +362,7 @@ wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
 
   // Check whether there will be fragmenation!
   // This will happen only for the last wave!
-  //if (n < N && (n + YTILE) >= N) {
+  // if (n < N && (n + YTILE) >= N) {
   //  uint32_t startColumn = N - YTILE;
   //  for (uint32_t i = 0; i < (n - startColumn); i++) {
   //    commitColumn[i] = 0;
@@ -453,7 +451,7 @@ wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
     //----------------------------------------------------
     for (uint32_t k1 = 0; k1 < K; k1 += THRDS * A_CHUNK * UNRL) {
       // Fetch the weight matrix from memory!
-#pragma unroll
+  #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
@@ -464,24 +462,17 @@ wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
         //----------------------------------------------------
         // The following code with YTILE > 1 has to be deleted
         //----------------------------------------------------
-if (YTILE >= 2)
-        bigB1[k2].h8 = (loadnt((half8*)(&B_[1 * K])));
-if (YTILE >= 3)
-        bigB2[k2].h8 = (loadnt((half8*)(&B_[2 * K])));
-if (YTILE >= 4)
-        bigB3[k2].h8 = (loadnt((half8*)(&B_[3 * K])));
-if (YTILE >= 5)
-        bigB4[k2].h8 = (loadnt((half8*)(&B_[4 * K])));
-if (YTILE >= 6)
-        bigB5[k2].h8 = (loadnt((half8*)(&B_[5 * K])));
-if (YTILE >= 7)
-        bigB6[k2].h8 = (loadnt((half8*)(&B_[6 * K])));
-if (YTILE >= 8)
-        bigB7[k2].h8 = (loadnt((half8*)(&B_[7 * K])));
+        if (YTILE >= 2) bigB1[k2].h8 = (loadnt((half8*)(&B_[1 * K])));
+        if (YTILE >= 3) bigB2[k2].h8 = (loadnt((half8*)(&B_[2 * K])));
+        if (YTILE >= 4) bigB3[k2].h8 = (loadnt((half8*)(&B_[3 * K])));
+        if (YTILE >= 5) bigB4[k2].h8 = (loadnt((half8*)(&B_[4 * K])));
+        if (YTILE >= 6) bigB5[k2].h8 = (loadnt((half8*)(&B_[5 * K])));
+        if (YTILE >= 7) bigB6[k2].h8 = (loadnt((half8*)(&B_[6 * K])));
+        if (YTILE >= 8) bigB7[k2].h8 = (loadnt((half8*)(&B_[7 * K])));
       }
 
       // Fetch activation matrix from either just LDS or from both LDS / memory
-#pragma unroll
+  #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
@@ -490,24 +481,24 @@ if (YTILE >= 8)
         // Fetch A activation matrix in interleaved fashion from LDS or memory
 
         for (int m = 0; m < M; m++) {
-          //if (k_ + K * m < 32 * 1024)
-            bigA[m][k2] = *((const bigType*)(&(s[k_ + K * m])));
-          //else
-          //  bigA[m][k2] = *((const bigType*)(&(A[k_ + K * m])));
+          // if (k_ + K * m < 32 * 1024)
+          bigA[m][k2] = *((const bigType*)(&(s[k_ + K * m])));
+          // else
+          //   bigA[m][k2] = *((const bigType*)(&(A[k_ + K * m])));
         }
       }
 
       // Do the matrix multiplication in interleaved manner
-#pragma unroll
+  #pragma unroll
       for (uint32_t m = 0; m < M; m++) {
-#pragma unroll
+  #pragma unroll
         for (uint32_t k2 = 0; k2 < UNRL; k2++) {
           uint32_t k = k1 + k2 * THRDS * A_CHUNK;
           uint32_t k_ = k + threadIdx.x * A_CHUNK;
           if (k_ >= K) break;
-          // Do the matrix multiplication of activation and weight matrix
-          // - Remember the accumulation is happening for K-split of 64!
-#pragma unroll
+            // Do the matrix multiplication of activation and weight matrix
+            // - Remember the accumulation is happening for K-split of 64!
+  #pragma unroll
           for (uint32_t b = 0; b < A_CHUNK / 2; b++) {
             asm("v_dot2c_f32_f16 %0, %2, %3"
                 : "=v"(sum[m][0])
@@ -516,34 +507,34 @@ if (YTILE >= 8)
             //----------------------------------------------------
             // The following code with YTILE > 1
             //----------------------------------------------------
-if (YTILE >= 2)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][1])
-                : "0"(sum[m][1]), "v"(bigA[m][k2].f[b]), "v"(bigB1[k2].f[b]));
-if (YTILE >= 3)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][2])
-                : "0"(sum[m][2]), "v"(bigA[m][k2].f[b]), "v"(bigB2[k2].f[b]));
-if (YTILE >= 4)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][3])
-                : "0"(sum[m][3]), "v"(bigA[m][k2].f[b]), "v"(bigB3[k2].f[b]));
-if (YTILE >= 5)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][4])
-                : "0"(sum[m][4]), "v"(bigA[m][k2].f[b]), "v"(bigB4[k2].f[b]));
-if (YTILE >= 6)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][5])
-                : "0"(sum[m][5]), "v"(bigA[m][k2].f[b]), "v"(bigB5[k2].f[b]));
-if (YTILE >= 7)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][6])
-                : "0"(sum[m][6]), "v"(bigA[m][k2].f[b]), "v"(bigB6[k2].f[b]));
-if (YTILE >= 8)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][7])
-                : "0"(sum[m][7]), "v"(bigA[m][k2].f[b]), "v"(bigB7[k2].f[b]));
+            if (YTILE >= 2)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][1])
+                  : "0"(sum[m][1]), "v"(bigA[m][k2].f[b]), "v"(bigB1[k2].f[b]));
+            if (YTILE >= 3)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][2])
+                  : "0"(sum[m][2]), "v"(bigA[m][k2].f[b]), "v"(bigB2[k2].f[b]));
+            if (YTILE >= 4)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][3])
+                  : "0"(sum[m][3]), "v"(bigA[m][k2].f[b]), "v"(bigB3[k2].f[b]));
+            if (YTILE >= 5)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][4])
+                  : "0"(sum[m][4]), "v"(bigA[m][k2].f[b]), "v"(bigB4[k2].f[b]));
+            if (YTILE >= 6)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][5])
+                  : "0"(sum[m][5]), "v"(bigA[m][k2].f[b]), "v"(bigB5[k2].f[b]));
+            if (YTILE >= 7)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][6])
+                  : "0"(sum[m][6]), "v"(bigA[m][k2].f[b]), "v"(bigB6[k2].f[b]));
+            if (YTILE >= 8)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][7])
+                  : "0"(sum[m][7]), "v"(bigA[m][k2].f[b]), "v"(bigB7[k2].f[b]));
           }
         }
       }
@@ -554,30 +545,30 @@ if (YTILE >= 8)
     //----------------------------------------------------
     for (int m = 0; m < M; m++) {
       for (int y = 0; y < YTILE; y++) {
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:8 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:4 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:2 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 wave_shr:1 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:15 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:31 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:8 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:4 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:2 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 wave_shr:1 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:15 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:31 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
       }
-    } 
+    }
     if (threadIdx.x == 63) {
       for (int m = 0; m < M; m++) {
         for (int i = 0; i < YTILE; i++) {
-          //if (commitColumn[i]) C[n + i + m * N] = __float2half(sum[m][i]);
+          // if (commitColumn[i]) C[n + i + m * N] = __float2half(sum[m][i]);
           C[n + i + m * N] = __float2half(sum[m][i]);
         }
       }
@@ -587,7 +578,7 @@ if (YTILE >= 8)
 
     // Check whether there will be fragmenation!
     // This will happen only for the last wave!
-    //if (n < N && (n + YTILE) >= N) {
+    // if (n < N && (n + YTILE) >= N) {
     //  uint32_t startColumn = N - YTILE;
     //  for (uint32_t i = 0; i < (n - startColumn); i++) {
     //    commitColumn[i] = 0;
@@ -596,24 +587,23 @@ if (YTILE >= 8)
     //}
   }
 }
-#else  // !defined(__HIP__MI300__) TODO: Add NAVI support
+#else   // !defined(__HIP__MI300__) TODO: Add NAVI support
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
-		                                   const DTYPE* __restrict__ A, DTYPE* C,
-						                                      const int CuCount) {
-	  assert(false);
+                                const DTYPE* __restrict__ A, DTYPE* C,
+                                const int CuCount) {
+  assert(false);
 }
 #endif  // defined(__HIP__MI300__) TODO: Add NAVI support
 
 #if defined(__HIP__MI300__)  // TODO: Add NAVI support
 // This version targets cases where A[] marginally exceeds LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
-__global__ void 
-__launch_bounds__(WvPrGrp*THRDS)
-wvSpltK_hf_(const int K, const int N, const DTYPE* B,
-                               const DTYPE* __restrict__ A, DTYPE* C,
-                               const int CuCount) {
-  using half8 = __attribute__((__vector_size__((A_CHUNK/2) * sizeof(float)))) float;
+__global__ void __launch_bounds__(WvPrGrp* THRDS)
+    wvSpltK_hf_(const int K, const int N, const DTYPE* B,
+                const DTYPE* __restrict__ A, DTYPE* C, const int CuCount) {
+  using half8 =
+      __attribute__((__vector_size__((A_CHUNK / 2) * sizeof(float)))) float;
   union bigType {
     DTYPE h[A_CHUNK];
     float f[A_CHUNK / 2];
@@ -738,7 +728,7 @@ wvSpltK_hf_(const int K, const int N, const DTYPE* B,
     //----------------------------------------------------
     for (uint32_t k1 = 0; k1 < K; k1 += THRDS * A_CHUNK * UNRL) {
       // Fetch the weight matrix from memory!
-#pragma unroll
+  #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
@@ -749,24 +739,17 @@ wvSpltK_hf_(const int K, const int N, const DTYPE* B,
         //----------------------------------------------------
         // The following code with YTILE > 1 has to be deleted
         //----------------------------------------------------
-if (YTILE >= 2)
-        bigB1[k2].h8 = (loadnt((half8*)(&B_[1 * K])));
-if (YTILE >= 3)
-        bigB2[k2].h8 = (loadnt((half8*)(&B_[2 * K])));
-if (YTILE >= 4)
-        bigB3[k2].h8 = (loadnt((half8*)(&B_[3 * K])));
-if (YTILE >= 5)
-        bigB4[k2].h8 = (loadnt((half8*)(&B_[4 * K])));
-if (YTILE >= 6)
-        bigB5[k2].h8 = (loadnt((half8*)(&B_[5 * K])));
-if (YTILE >= 7)
-        bigB6[k2].h8 = (loadnt((half8*)(&B_[6 * K])));
-if (YTILE >= 8)
-        bigB7[k2].h8 = (loadnt((half8*)(&B_[7 * K])));
+        if (YTILE >= 2) bigB1[k2].h8 = (loadnt((half8*)(&B_[1 * K])));
+        if (YTILE >= 3) bigB2[k2].h8 = (loadnt((half8*)(&B_[2 * K])));
+        if (YTILE >= 4) bigB3[k2].h8 = (loadnt((half8*)(&B_[3 * K])));
+        if (YTILE >= 5) bigB4[k2].h8 = (loadnt((half8*)(&B_[4 * K])));
+        if (YTILE >= 6) bigB5[k2].h8 = (loadnt((half8*)(&B_[5 * K])));
+        if (YTILE >= 7) bigB6[k2].h8 = (loadnt((half8*)(&B_[6 * K])));
+        if (YTILE >= 8) bigB7[k2].h8 = (loadnt((half8*)(&B_[7 * K])));
       }
 
       // Fetch activation matrix from either just LDS or from both LDS / memory
-#pragma unroll
+  #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
@@ -783,16 +766,16 @@ if (YTILE >= 8)
       }
 
       // Do the matrix multiplication in interleaved manner
-#pragma unroll
+  #pragma unroll
       for (uint32_t m = 0; m < M; m++) {
-#pragma unroll
+  #pragma unroll
         for (uint32_t k2 = 0; k2 < UNRL; k2++) {
           uint32_t k = k1 + k2 * THRDS * A_CHUNK;
           uint32_t k_ = k + threadIdx.x * A_CHUNK;
           if (k_ >= K) break;
-          // Do the matrix multiplication of activation and weight matrix
-          // - Remember the accumulation is happening for K-split of 64!
-#pragma unroll
+            // Do the matrix multiplication of activation and weight matrix
+            // - Remember the accumulation is happening for K-split of 64!
+  #pragma unroll
           for (uint32_t b = 0; b < A_CHUNK / 2; b++) {
             asm("v_dot2c_f32_f16 %0, %2, %3"
                 : "=v"(sum[m][0])
@@ -801,35 +784,35 @@ if (YTILE >= 8)
             //----------------------------------------------------
             // The following code with YTILE > 1
             //----------------------------------------------------
-if (YTILE >= 2)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][1])
-                : "0"(sum[m][1]), "v"(bigA[m][k2].f[b]), "v"(bigB1[k2].f[b]));
-if (YTILE >= 3)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][2])
-                : "0"(sum[m][2]), "v"(bigA[m][k2].f[b]), "v"(bigB2[k2].f[b]));
-if (YTILE >= 4)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][3])
-                : "0"(sum[m][3]), "v"(bigA[m][k2].f[b]), "v"(bigB3[k2].f[b]));
-if (YTILE >= 5)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][4])
-                : "0"(sum[m][4]), "v"(bigA[m][k2].f[b]), "v"(bigB4[k2].f[b]));
-if (YTILE >= 6)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][5])
-                : "0"(sum[m][5]), "v"(bigA[m][k2].f[b]), "v"(bigB5[k2].f[b]));
-if (YTILE >= 7)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][6])
-                : "0"(sum[m][6]), "v"(bigA[m][k2].f[b]), "v"(bigB6[k2].f[b]));
-if (YTILE >= 8)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][7])
-                : "0"(sum[m][7]), "v"(bigA[m][k2].f[b]), "v"(bigB7[k2].f[b]));
-           }
+            if (YTILE >= 2)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][1])
+                  : "0"(sum[m][1]), "v"(bigA[m][k2].f[b]), "v"(bigB1[k2].f[b]));
+            if (YTILE >= 3)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][2])
+                  : "0"(sum[m][2]), "v"(bigA[m][k2].f[b]), "v"(bigB2[k2].f[b]));
+            if (YTILE >= 4)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][3])
+                  : "0"(sum[m][3]), "v"(bigA[m][k2].f[b]), "v"(bigB3[k2].f[b]));
+            if (YTILE >= 5)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][4])
+                  : "0"(sum[m][4]), "v"(bigA[m][k2].f[b]), "v"(bigB4[k2].f[b]));
+            if (YTILE >= 6)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][5])
+                  : "0"(sum[m][5]), "v"(bigA[m][k2].f[b]), "v"(bigB5[k2].f[b]));
+            if (YTILE >= 7)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][6])
+                  : "0"(sum[m][6]), "v"(bigA[m][k2].f[b]), "v"(bigB6[k2].f[b]));
+            if (YTILE >= 8)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][7])
+                  : "0"(sum[m][7]), "v"(bigA[m][k2].f[b]), "v"(bigB7[k2].f[b]));
+          }
         }
       }
     }
@@ -839,25 +822,25 @@ if (YTILE >= 8)
     //----------------------------------------------------
     for (int m = 0; m < M; m++) {
       for (int y = 0; y < YTILE; y++) {
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:8 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:4 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:2 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 wave_shr:1 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:15 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:31 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-       }
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:8 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:4 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:2 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 wave_shr:1 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:15 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:31 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+      }
     }
 
     if (threadIdx.x == 63) {
@@ -882,24 +865,23 @@ if (YTILE >= 8)
   }
 }
 
-#else  // !defined(__HIP__MI300__) TODO: Add NAVI support
+#else   // !defined(__HIP__MI300__) TODO: Add NAVI support
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void wvSpltK_hf_(const int K, const int N, const DTYPE* B,
-		                                   const DTYPE* __restrict__ A, DTYPE* C,
-						                                      const int CuCount) {
-	  assert(false);
+                            const DTYPE* __restrict__ A, DTYPE* C,
+                            const int CuCount) {
+  assert(false);
 }
 #endif  // defined(__HIP__MI300__) TODO: Add NAVI support
 
 #if defined(__HIP__MI300__)  // TODO: Add NAVI support
 // This version targets big A[] cases, where it is much larger than LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
-__global__ void 
-__launch_bounds__(WvPrGrp*THRDS)
-wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
-                               const DTYPE* __restrict__ A, DTYPE* C,
-                               const int CuCount) {
-  using half8 = __attribute__((__vector_size__((A_CHUNK/2) * sizeof(float)))) float;
+__global__ void __launch_bounds__(WvPrGrp* THRDS)
+    wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
+                    const DTYPE* __restrict__ A, DTYPE* C, const int CuCount) {
+  using half8 =
+      __attribute__((__vector_size__((A_CHUNK / 2) * sizeof(float)))) float;
 
   union bigType {
     DTYPE h[A_CHUNK];
@@ -952,8 +934,8 @@ wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
   // - Then the WG will move to another 8 K elements
   // TODO: Logic below will only work when K is multiple of 8
   //----------------------------------------------------
-#define PCML
-#ifndef PCML
+  #define PCML
+  #ifndef PCML
   for (uint32_t k = 0; k < min(K * M, 32 * 1024);
        k += THRDS * WvPrGrp * A_CHUNK) {
     uint32_t k_in = k + ((threadIdx.y * THRDS + threadIdx.x) * A_CHUNK);
@@ -969,17 +951,20 @@ wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
     //((bigType*)(&s[k_ot]))->b128 = ((bigType*)(&A[k_in]))->b128;
   }
   __syncthreads();
-#endif
+  #endif
 
   #define YW (YTILE * WvPrGrp)
   #define TWC (THRDS * WvPrGrp * A_CHUNK)
   #define TUC (THRDS * UNRL * A_CHUNK)
   uint32_t kBase = 0;
-  //find biggest k size that fits in LDS
-  uint32_t kFit = (32*1024)/M;
-  //kFit = (kFit%TWC==0) ? kFit : (kFit-kFit%TWC+TWC); //round up to multiple of TUC
-  kFit = (kFit%TUC==0) ? kFit : (kFit-kFit%TUC); //round up to multiple of TUC
-  //if (kFit == 0) kFit = TUC;
+  // find biggest k size that fits in LDS
+  uint32_t kFit = (32 * 1024) / M;
+  // kFit = (kFit%TWC==0) ? kFit : (kFit-kFit%TWC+TWC); //round up to multiple
+  // of TUC
+  kFit = (kFit % TUC == 0)
+             ? kFit
+             : (kFit - kFit % TUC);  // round up to multiple of TUC
+  // if (kFit == 0) kFit = TUC;
   kFit = min(kFit, K);
 
   float sum[M][YTILE];
@@ -999,12 +984,12 @@ wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
   // - After completing first set of columns, WGs start
   //   working on the next set of available columns
   //----------------------------------------------------
-#ifdef PCML
-  uint32_t Nrndp = (N%YW==0) ? N : (N-N%YW+YW);
+  #ifdef PCML
+  uint32_t Nrndp = (N % YW == 0) ? N : (N - N % YW + YW);
   while (n < Nrndp) {
-#else 
+  #else
   while (n < N) {
-#endif
+  #endif
     //----------------------------------------------------
     // 'sum' accumulates the matrix A x B computation
     // split across 64 lanes.
@@ -1045,28 +1030,27 @@ wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
     // TODO: Logic below will only work when K is multiple of 8
     //----------------------------------------------------
     for (uint32_t k1 = 0; k1 < K; k1 += THRDS * A_CHUNK * UNRL) {
+  #ifdef PCML
+      if ((k1 == 0) || (k1 == kBase + kFit)) {  // load next chunk of A[] to LDS
+        if (k1 != 0) kBase += kFit;
+        __syncthreads();
+        for (uint32_t k = 0; k < kFit; k += TWC) {
+          uint32_t kOff = k + ((threadIdx.y * THRDS + threadIdx.x) * A_CHUNK);
+          if (kBase + kOff >= K) break;
+          if (kOff >= kFit) break;
+          for (uint32_t m = 0; m < M; m++) {
+            uint32_t k_in = kBase + m * K + kOff;
+            uint32_t k_ot = m * kFit + kOff;
+            *((bigType*)(&s[k_ot])) = *((bigType*)(&A[k_in]));
+          }
+        }
+        __syncthreads();
+      }
+      if (n >= N) continue;
+  #endif
 
-#ifdef PCML
-        if ((k1 == 0) || (k1 == kBase + kFit)) { // load next chunk of A[] to LDS
-                if (k1 != 0) kBase += kFit;
-		__syncthreads();
-                for (uint32_t k = 0; k < kFit; k += TWC) {
-	            uint32_t kOff = k + ((threadIdx.y * THRDS + threadIdx.x) * A_CHUNK);    
-                    if (kBase + kOff >= K) break;
-                    if (kOff >= kFit) break;
-                    for (uint32_t m = 0; m < M; m++) {
-                    uint32_t k_in = kBase + m * K    + kOff;
-                    uint32_t k_ot =         m * kFit + kOff;
- 		    *((bigType*)(&s[k_ot])) = *((bigType*)(&A[k_in]));
-		    }
-		}
-                __syncthreads();
-	}
-	if (n >= N) continue;
-#endif
-
-      // Fetch the weight matrix from memory!
-#pragma unroll
+        // Fetch the weight matrix from memory!
+  #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
@@ -1077,24 +1061,17 @@ wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
         //----------------------------------------------------
         // The following code with YTILE > 1 has to be deleted
         //----------------------------------------------------
-if (YTILE >= 2)
-        bigB1[k2].h8 = (loadnt((half8*)(&B_[1 * K])));
-if (YTILE >= 3)
-        bigB2[k2].h8 = (loadnt((half8*)(&B_[2 * K])));
-if (YTILE >= 4)
-        bigB3[k2].h8 = (loadnt((half8*)(&B_[3 * K])));
-if (YTILE >= 5)
-        bigB4[k2].h8 = (loadnt((half8*)(&B_[4 * K])));
-if (YTILE >= 6)
-        bigB5[k2].h8 = (loadnt((half8*)(&B_[5 * K])));
-if (YTILE >= 7)
-        bigB6[k2].h8 = (loadnt((half8*)(&B_[6 * K])));
-if (YTILE >= 8)
-        bigB7[k2].h8 = (loadnt((half8*)(&B_[7 * K])));
+        if (YTILE >= 2) bigB1[k2].h8 = (loadnt((half8*)(&B_[1 * K])));
+        if (YTILE >= 3) bigB2[k2].h8 = (loadnt((half8*)(&B_[2 * K])));
+        if (YTILE >= 4) bigB3[k2].h8 = (loadnt((half8*)(&B_[3 * K])));
+        if (YTILE >= 5) bigB4[k2].h8 = (loadnt((half8*)(&B_[4 * K])));
+        if (YTILE >= 6) bigB5[k2].h8 = (loadnt((half8*)(&B_[5 * K])));
+        if (YTILE >= 7) bigB6[k2].h8 = (loadnt((half8*)(&B_[6 * K])));
+        if (YTILE >= 8) bigB7[k2].h8 = (loadnt((half8*)(&B_[7 * K])));
       }
 
       // Fetch activation matrix from either just LDS or from both LDS / memory
-#pragma unroll
+  #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
@@ -1102,30 +1079,29 @@ if (YTILE >= 8)
 
         // Fetch A activation matrix in interleaved fashion from LDS or memory
 
-        for (int m = 0; m < M; m++) 
-	{
-#ifdef PCML
-          bigA[m][k2] = *((const bigType*)(&(s[k_-kBase+kFit*m])));
-#else
+        for (int m = 0; m < M; m++) {
+  #ifdef PCML
+          bigA[m][k2] = *((const bigType*)(&(s[k_ - kBase + kFit * m])));
+  #else
           if (k_ + K * m < 32 * 1024)
             bigA[m][k2] = *((const bigType*)(&(s[k_ + K * m])));
           else
             bigA[m][k2] = *((const bigType*)(&(A[k_ + K * m])));
-#endif
+  #endif
         }
       }
 
       // Do the matrix multiplication in interleaved manner
-#pragma unroll
+  #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
         if (k_ >= K) break;
-#pragma unroll
+  #pragma unroll
         for (uint32_t m = 0; m < M; m++) {
           // Do the matrix multiplication of activation and weight matrix
           // - Remember the accumulation is happening for K-split of 64!
-#pragma unroll
+  #pragma unroll
           for (uint32_t b = 0; b < A_CHUNK / 2; b++) {
             asm("v_dot2c_f32_f16 %0, %2, %3"
                 : "=v"(sum[m][0])
@@ -1134,71 +1110,71 @@ if (YTILE >= 8)
             //----------------------------------------------------
             // The following code with YTILE > 1
             //----------------------------------------------------
-if (YTILE >= 2)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][1])
-                : "0"(sum[m][1]), "v"(bigA[m][k2].f[b]), "v"(bigB1[k2].f[b]));
-if (YTILE >= 3)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][2])
-                : "0"(sum[m][2]), "v"(bigA[m][k2].f[b]), "v"(bigB2[k2].f[b]));
-if (YTILE >= 4)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][3])
-                : "0"(sum[m][3]), "v"(bigA[m][k2].f[b]), "v"(bigB3[k2].f[b]));
-if (YTILE >= 5)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][4])
-                : "0"(sum[m][4]), "v"(bigA[m][k2].f[b]), "v"(bigB4[k2].f[b]));
-if (YTILE >= 6)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][5])
-                : "0"(sum[m][5]), "v"(bigA[m][k2].f[b]), "v"(bigB5[k2].f[b]));
-if (YTILE >= 7)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][6])
-                : "0"(sum[m][6]), "v"(bigA[m][k2].f[b]), "v"(bigB6[k2].f[b]));
-if (YTILE >= 8)
-            asm("v_dot2c_f32_f16 %0, %2, %3"
-                : "=v"(sum[m][7])
-                : "0"(sum[m][7]), "v"(bigA[m][k2].f[b]), "v"(bigB7[k2].f[b]));
+            if (YTILE >= 2)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][1])
+                  : "0"(sum[m][1]), "v"(bigA[m][k2].f[b]), "v"(bigB1[k2].f[b]));
+            if (YTILE >= 3)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][2])
+                  : "0"(sum[m][2]), "v"(bigA[m][k2].f[b]), "v"(bigB2[k2].f[b]));
+            if (YTILE >= 4)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][3])
+                  : "0"(sum[m][3]), "v"(bigA[m][k2].f[b]), "v"(bigB3[k2].f[b]));
+            if (YTILE >= 5)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][4])
+                  : "0"(sum[m][4]), "v"(bigA[m][k2].f[b]), "v"(bigB4[k2].f[b]));
+            if (YTILE >= 6)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][5])
+                  : "0"(sum[m][5]), "v"(bigA[m][k2].f[b]), "v"(bigB5[k2].f[b]));
+            if (YTILE >= 7)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][6])
+                  : "0"(sum[m][6]), "v"(bigA[m][k2].f[b]), "v"(bigB6[k2].f[b]));
+            if (YTILE >= 8)
+              asm("v_dot2c_f32_f16 %0, %2, %3"
+                  : "=v"(sum[m][7])
+                  : "0"(sum[m][7]), "v"(bigA[m][k2].f[b]), "v"(bigB7[k2].f[b]));
           }
         }
       }
     }
 
-#ifdef PCML
-    if (n>=N) {
-        n += CuCount * WvPrGrp * YTILE;
-        kBase = 0;
-        continue;
+  #ifdef PCML
+    if (n >= N) {
+      n += CuCount * WvPrGrp * YTILE;
+      kBase = 0;
+      continue;
     }
-#endif
+  #endif
 
     //----------------------------------------------------
     // Final reduction step using shuffle
     //----------------------------------------------------
     for (int m = 0; m < M; m++) {
       for (int y = 0; y < YTILE; y++) {
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:8 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:4 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:2 bound_ctrl:0 "
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 wave_shr:1 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:15 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-          asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:31 bound_ctrl:0"
-              : "=v"(sum[m][y])
-              : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
-       }
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:8 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:4 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_shr:2 bound_ctrl:0 "
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 wave_shr:1 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:15 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+        asm("s_nop 0\n\tv_add_f32 %0, %2, %3 row_bcast:31 bound_ctrl:0"
+            : "=v"(sum[m][y])
+            : "0"(sum[m][y]), "v"(sum[m][y]), "v"(sum[m][y]));
+      }
     }
 
     if (threadIdx.x == 63) {
@@ -1223,12 +1199,12 @@ if (YTILE >= 8)
     }
   }
 }
-#else  // !defined(__HIP__MI300__) TODO: Add NAVI support
+#else   // !defined(__HIP__MI300__) TODO: Add NAVI support
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
-		                                   const DTYPE* __restrict__ A, DTYPE* C,
-						                                      const int CuCount) {
-	  assert(false);
+                                const DTYPE* __restrict__ A, DTYPE* C,
+                                const int CuCount) {
+  assert(false);
 }
 #endif  // defined(__HIP__MI300__) TODO: Add NAVI support
 
@@ -1240,45 +1216,48 @@ void wvSpltK_(void* in_a, void* in_b, void* out_c, const int M_in,
   const half* bf4 = reinterpret_cast<const half*>(in_b);
   auto* c = reinterpret_cast<half*>(out_c);
 
-  #define WVSPLTK(_WvPrGrp, _YTILEs, _YTILEm, _YTILEb, _UNRLs, _UNRLm, _UNRLb, _N) {\
-      dim3 block(64, _WvPrGrp); \
-      /*wvSpltK_hf:<int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>*/ \
-      if ((K_in*N_in <= 32 * 1024) && (M_in % _YTILEs == 0)) { \
-          wvSpltK_hf_sml_<64,_YTILEs,_WvPrGrp,8,_UNRLs,_N><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount); \
-      } \
-      else if (K_in*N_in <= 32 * 1024 * 1.2) { \
-          wvSpltK_hf_<64,_YTILEm,_WvPrGrp,8,_UNRLm,_N><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount); \
-      } \
-      else { \
-          wvSpltK_hf_big_<64,_YTILEb,_WvPrGrp,8,_UNRLb,_N><<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount); \
-      } \
+#define WVSPLTK(_WvPrGrp, _YTILEs, _YTILEm, _YTILEb, _UNRLs, _UNRLm, _UNRLb, \
+                _N)                                                          \
+  {                                                                          \
+    dim3 block(64, _WvPrGrp);                                                \
+    /*wvSpltK_hf:<int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL,  \
+     * int M>*/                                                              \
+    if ((K_in * N_in <= 32 * 1024) && (M_in % _YTILEs == 0)) {               \
+      wvSpltK_hf_sml_<64, _YTILEs, _WvPrGrp, 8, _UNRLs, _N>                  \
+          <<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount);    \
+    } else if (K_in * N_in <= 32 * 1024 * 1.2) {                             \
+      wvSpltK_hf_<64, _YTILEm, _WvPrGrp, 8, _UNRLm, _N>                      \
+          <<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount);    \
+    } else {                                                                 \
+      wvSpltK_hf_big_<64, _YTILEb, _WvPrGrp, 8, _UNRLb, _N>                  \
+          <<<grid, block, 0, stream>>>(K_in, M_in, af4, bf4, c, CuCount);    \
+    }                                                                        \
   }
 
-
   switch (N_in) {
-    case 1: 
+    case 1:
       if (CuCount < 100)
-	      WVSPLTK(16, 2, 2, 2, 2, 2, 2, 1) // MI308
-      else 
-	      WVSPLTK(12,  4, 4, 4, 2, 2, 2, 1) // MI300
+        WVSPLTK(16, 2, 2, 2, 2, 2, 2, 1)  // MI308
+      else
+        WVSPLTK(12, 4, 4, 4, 2, 2, 2, 1)  // MI300
       break;
     case 2:
       if (CuCount < 100)
-	      WVSPLTK(16, 2, 2, 2, 2, 2, 2, 2) // MI308
-      else 
-	      WVSPLTK(12,  4, 4, 4, 2, 2, 2, 2) // MI300
+        WVSPLTK(16, 2, 2, 2, 2, 2, 2, 2)  // MI308
+      else
+        WVSPLTK(12, 4, 4, 4, 2, 2, 2, 2)  // MI300
       break;
     case 3:
       if (CuCount < 100)
-	      WVSPLTK(16, 4, 7, 7, 1, 1, 1, 3) // MI308
-      else 
-	      WVSPLTK(12,  4, 7, 7, 1, 1, 1, 3) // MI300
+        WVSPLTK(16, 4, 7, 7, 1, 1, 1, 3)  // MI308
+      else
+        WVSPLTK(12, 4, 7, 7, 1, 1, 1, 3)  // MI300
       break;
     case 4:
       if (CuCount < 100)
-	      WVSPLTK(16, 4, 7, 7, 1, 1, 1, 4) // MI308
-      else 
-	      WVSPLTK(12,  4, 7, 7, 1, 1, 1, 4) // MI300
+        WVSPLTK(16, 4, 7, 7, 1, 1, 1, 4)  // MI308
+      else
+        WVSPLTK(12, 4, 7, 7, 1, 1, 1, 4)  // MI300
       break;
     default:
       throw std::runtime_error("Unsupported N value: " + std::to_string(M_in) +
