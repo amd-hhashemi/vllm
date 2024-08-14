@@ -353,12 +353,49 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   //  commitColumn[i] = 1;
   //}
 
+  // It's worth trying to load-balance...
+  int nPrRnd = CuCount * WvPrGrp * YTILE;
+  int rnds0 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds1 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds2 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds3 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds4 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds5 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int _WvPrGrp = WvPrGrp;
+  if (rnds0 >= rnds1) {
+    _WvPrGrp = WvPrGrp - 1;
+    rnds0 = rnds1;
+  }
+  if (rnds0 >= rnds2) {
+    _WvPrGrp = WvPrGrp - 2;
+    rnds0 = rnds2;
+  }
+  if (rnds0 >= rnds3) {
+    _WvPrGrp = WvPrGrp - 3;
+    rnds0 = rnds3;
+  }
+  if (rnds0 >= rnds4) {
+    _WvPrGrp = WvPrGrp - 4;
+    rnds0 = rnds4;
+  }
+  if (rnds0 >= rnds5) {
+    _WvPrGrp = WvPrGrp - 5;
+  }
+
+  if (threadIdx.y >= _WvPrGrp) return;
+
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
   // Algorithm does 64 lane k-splitting / wave and uses
   // WG ID and Thread ID to find the index.
   //----------------------------------------------------
-  uint32_t n = (blockIdx.x * WvPrGrp + threadIdx.y) * YTILE;
+  uint32_t n = (blockIdx.x * _WvPrGrp + threadIdx.y) * YTILE;
 
   // Check whether there will be fragmenation!
   // This will happen only for the last wave!
@@ -490,14 +527,14 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
 
       // Do the matrix multiplication in interleaved manner
   #pragma unroll
-      for (uint32_t m = 0; m < M; m++) {
+      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
+          // Do the matrix multiplication of activation and weight matrix
+          // - Remember the accumulation is happening for K-split of 64!
   #pragma unroll
-        for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-          uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-          uint32_t k_ = k + threadIdx.x * A_CHUNK;
-          if (k_ >= K) break;
-            // Do the matrix multiplication of activation and weight matrix
-            // - Remember the accumulation is happening for K-split of 64!
+        for (uint32_t m = 0; m < M; m++) {
   #pragma unroll
           for (uint32_t b = 0; b < A_CHUNK / 2; b++) {
             asm("v_dot2c_f32_f16 %0, %2, %3"
@@ -574,7 +611,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
       }
     }
 
-    n += CuCount * WvPrGrp * YTILE;
+    n += CuCount * _WvPrGrp * YTILE;
 
     // Check whether there will be fragmenation!
     // This will happen only for the last wave!
@@ -629,12 +666,49 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     commitColumn[i] = 1;
   }
 
+  // It's worth trying to load-balance...
+  int nPrRnd = CuCount * WvPrGrp * YTILE;
+  int rnds0 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds1 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds2 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds3 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds4 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int rnds5 = (N + nPrRnd - 1) / nPrRnd;
+  nPrRnd -= CuCount * YTILE;
+  int _WvPrGrp = WvPrGrp;
+  if (rnds0 >= rnds1) {
+    _WvPrGrp = WvPrGrp - 1;
+    rnds0 = rnds1;
+  }
+  if (rnds0 >= rnds2) {
+    _WvPrGrp = WvPrGrp - 2;
+    rnds0 = rnds2;
+  }
+  if (rnds0 >= rnds3) {
+    _WvPrGrp = WvPrGrp - 3;
+    rnds0 = rnds3;
+  }
+  if (rnds0 >= rnds4) {
+    _WvPrGrp = WvPrGrp - 4;
+    rnds0 = rnds4;
+  }
+  if (rnds0 >= rnds5) {
+    _WvPrGrp = WvPrGrp - 5;
+  }
+
+  if (threadIdx.y >= _WvPrGrp) return;
+
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
   // Algorithm does 64 lane k-splitting / wave and uses
   // WG ID and Thread ID to find the index.
   //----------------------------------------------------
-  uint32_t n = (blockIdx.x * WvPrGrp + threadIdx.y) * YTILE;
+  uint32_t n = (blockIdx.x * _WvPrGrp + threadIdx.y) * YTILE;
 
   // Check whether there will be fragmenation!
   // This will happen only for the last wave!
@@ -851,7 +925,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
       }
     }
 
-    n += CuCount * WvPrGrp * YTILE;
+    n += CuCount * _WvPrGrp * YTILE;
 
     // Check whether there will be fragmenation!
     // This will happen only for the last wave!
@@ -1236,28 +1310,16 @@ void wvSpltK_(void* in_a, void* in_b, void* out_c, const int M_in,
 
   switch (N_in) {
     case 1:
-      if (CuCount < 100)
-        WVSPLTK(16, 2, 2, 2, 2, 2, 2, 1)  // MI308
-      else
-        WVSPLTK(12, 4, 4, 4, 2, 2, 2, 1)  // MI300
+      WVSPLTK(16, 2, 2, 2, 2, 2, 2, 1)  // MI308
       break;
     case 2:
-      if (CuCount < 100)
-        WVSPLTK(16, 2, 2, 2, 2, 2, 2, 2)  // MI308
-      else
-        WVSPLTK(12, 4, 4, 4, 2, 2, 2, 2)  // MI300
+      WVSPLTK(16, 2, 2, 2, 2, 2, 2, 2)  // MI308
       break;
     case 3:
-      if (CuCount < 100)
-        WVSPLTK(16, 4, 7, 7, 1, 1, 1, 3)  // MI308
-      else
-        WVSPLTK(12, 4, 7, 7, 1, 1, 1, 3)  // MI300
+      WVSPLTK(16, 4, 7, 7, 1, 1, 1, 3)  // MI308
       break;
     case 4:
-      if (CuCount < 100)
-        WVSPLTK(16, 4, 7, 7, 1, 1, 1, 4)  // MI308
-      else
-        WVSPLTK(12, 4, 7, 7, 1, 1, 1, 4)  // MI300
+      WVSPLTK(16, 4, 7, 7, 1, 1, 1, 4)  // MI308
       break;
     default:
       throw std::runtime_error("Unsupported N value: " + std::to_string(M_in) +
