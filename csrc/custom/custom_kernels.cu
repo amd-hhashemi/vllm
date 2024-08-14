@@ -388,8 +388,6 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     _WvPrGrp = WvPrGrp - 5;
   }
 
-  if (threadIdx.y >= _WvPrGrp) return;
-
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
   // Algorithm does 64 lane k-splitting / wave and uses
@@ -432,6 +430,8 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   }
   __syncthreads();
 
+  if (threadIdx.y >= _WvPrGrp) return;
+  
   float sum[M][YTILE];
 
   //----------------------------------------------------
@@ -701,8 +701,6 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     _WvPrGrp = WvPrGrp - 5;
   }
 
-  if (threadIdx.y >= _WvPrGrp) return;
-
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
   // Algorithm does 64 lane k-splitting / wave and uses
@@ -745,6 +743,8 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   }
   __syncthreads();
 
+  if (threadIdx.y >= _WvPrGrp) return;
+  
   float sum[M][YTILE];
 
   //----------------------------------------------------
