@@ -1193,7 +1193,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     }
 
   #ifdef PCML
-    if (n >= N) {
+    if ((n >= N) || (threadIdx.y >= _WvPrGrp)) {
       n += CuCount * _WvPrGrp * YTILE;
       kBase = 0;
       continue;
