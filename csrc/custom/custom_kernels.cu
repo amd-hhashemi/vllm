@@ -320,6 +320,42 @@ void LLGemmZZ(void* in_a, void* in_b, void* out_c, const int M, const int K,
 
 #define DTYPE half
 
+__device__ __forceinline__ int mindiv(int N, int div1, int div2) {
+  int nPrRnd = div1 * div2;
+  int rnds0 = N / nPrRnd;
+  nPrRnd -= div1*3;
+  int rnds3 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds4 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds5 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds6 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds7 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds8 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds9 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rtn = div2;
+  if (rnds0 == rnds3)
+    rtn = div2 - 3;
+  if (rnds0 == rnds4) 
+    rtn = div2 - 4;
+  if (rnds0 == rnds5)
+    rtn = div2 - 5;
+  if (rnds0 == rnds6)
+    rtn = div2 - 6;
+  if (rnds0 == rnds7)
+    rtn = div2 - 7;
+  if (rnds0 == rnds8)
+    rtn = div2 - 8;
+  if (rnds0 == rnds9)
+    rtn = div2 - 9;
+  return rtn;
+}
+
 #if defined(__HIP__MI300__)  // TODO: Add NAVI support
 // This version targets cases where A[] fits LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
@@ -354,39 +390,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   //}
 
   // It's worth trying to load-balance...
-  int nPrRnd = CuCount * WvPrGrp * YTILE;
-  int rnds0 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds1 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds2 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds3 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds4 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds5 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int _WvPrGrp = WvPrGrp;
-  if (rnds0 >= rnds1) {
-    _WvPrGrp = WvPrGrp - 1;
-    rnds0 = rnds1;
-  }
-  if (rnds0 >= rnds2) {
-    _WvPrGrp = WvPrGrp - 2;
-    rnds0 = rnds2;
-  }
-  if (rnds0 >= rnds3) {
-    _WvPrGrp = WvPrGrp - 3;
-    rnds0 = rnds3;
-  }
-  if (rnds0 >= rnds4) {
-    _WvPrGrp = WvPrGrp - 4;
-    rnds0 = rnds4;
-  }
-  if (rnds0 >= rnds5) {
-    _WvPrGrp = WvPrGrp - 5;
-  }
+  int _WvPrGrp = mindiv(N, CuCount*YTILE, WvPrGrp);
 
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
@@ -667,39 +671,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   }
 
   // It's worth trying to load-balance...
-  int nPrRnd = CuCount * WvPrGrp * YTILE;
-  int rnds0 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds1 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds2 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds3 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds4 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int rnds5 = (N + nPrRnd - 1) / nPrRnd;
-  nPrRnd -= CuCount * YTILE;
-  int _WvPrGrp = WvPrGrp;
-  if (rnds0 >= rnds1) {
-    _WvPrGrp = WvPrGrp - 1;
-    rnds0 = rnds1;
-  }
-  if (rnds0 >= rnds2) {
-    _WvPrGrp = WvPrGrp - 2;
-    rnds0 = rnds2;
-  }
-  if (rnds0 >= rnds3) {
-    _WvPrGrp = WvPrGrp - 3;
-    rnds0 = rnds3;
-  }
-  if (rnds0 >= rnds4) {
-    _WvPrGrp = WvPrGrp - 4;
-    rnds0 = rnds4;
-  }
-  if (rnds0 >= rnds5) {
-    _WvPrGrp = WvPrGrp - 5;
-  }
+  int _WvPrGrp = mindiv(N, CuCount*YTILE, WvPrGrp);
 
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
@@ -982,12 +954,15 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     commitColumn[i] = 1;
   }
 
+  // It's worth trying to load-balance...
+  int _WvPrGrp = mindiv(N, CuCount*YTILE, WvPrGrp);
+
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
   // Algorithm does 64 lane k-splitting / wave and uses
   // WG ID and Thread ID to find the index.
   //----------------------------------------------------
-  uint32_t n = (blockIdx.x * WvPrGrp + threadIdx.y) * YTILE;
+  uint32_t n = (blockIdx.x * _WvPrGrp + threadIdx.y) * YTILE;
 
   // Check whether there will be fragmenation!
   // This will happen only for the last wave!
@@ -1120,7 +1095,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
         }
         __syncthreads();
       }
-      if (n >= N) continue;
+      if ((n >= N) || (threadIdx.y >= _WvPrGrp)) continue;
   #endif
 
         // Fetch the weight matrix from memory!
@@ -1219,7 +1194,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
 
   #ifdef PCML
     if (n >= N) {
-      n += CuCount * WvPrGrp * YTILE;
+      n += CuCount * _WvPrGrp * YTILE;
       kBase = 0;
       continue;
     }
@@ -1259,7 +1234,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
       }
     }
 
-    n += CuCount * WvPrGrp * YTILE;
+    n += CuCount * _WvPrGrp * YTILE;
     kBase = 0;
 
     // Check whether there will be fragmenation!
