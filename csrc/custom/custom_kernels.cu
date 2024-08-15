@@ -323,7 +323,7 @@ void LLGemmZZ(void* in_a, void* in_b, void* out_c, const int M, const int K,
 __device__ __forceinline__ int mindiv(int N, int div1, int div2) {
   int nPrRnd = div1 * div2;
   int rnds0 = N / nPrRnd;
-  nPrRnd -= div1*3;
+  nPrRnd -= div1 * 3;
   int rnds3 = N / nPrRnd;
   nPrRnd -= div1;
   int rnds4 = N / nPrRnd;
@@ -339,20 +339,13 @@ __device__ __forceinline__ int mindiv(int N, int div1, int div2) {
   int rnds9 = N / nPrRnd;
   nPrRnd -= div1;
   int rtn = div2;
-  if (rnds0 == rnds3)
-    rtn = div2 - 3;
-  if (rnds0 == rnds4) 
-    rtn = div2 - 4;
-  if (rnds0 == rnds5)
-    rtn = div2 - 5;
-  if (rnds0 == rnds6)
-    rtn = div2 - 6;
-  if (rnds0 == rnds7)
-    rtn = div2 - 7;
-  if (rnds0 == rnds8)
-    rtn = div2 - 8;
-  if (rnds0 == rnds9)
-    rtn = div2 - 9;
+  if (rnds0 == rnds3) rtn = div2 - 3;
+  if (rnds0 == rnds4) rtn = div2 - 4;
+  if (rnds0 == rnds5) rtn = div2 - 5;
+  if (rnds0 == rnds6) rtn = div2 - 6;
+  if (rnds0 == rnds7) rtn = div2 - 7;
+  if (rnds0 == rnds8) rtn = div2 - 8;
+  if (rnds0 == rnds9) rtn = div2 - 9;
   return rtn;
 }
 
@@ -390,7 +383,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   //}
 
   // It's worth trying to load-balance...
-  int _WvPrGrp = mindiv(N, CuCount*YTILE, WvPrGrp);
+  int _WvPrGrp = mindiv(N, CuCount * YTILE, WvPrGrp);
 
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
@@ -435,7 +428,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   __syncthreads();
 
   if (threadIdx.y >= _WvPrGrp) return;
-  
+
   float sum[M][YTILE];
 
   //----------------------------------------------------
@@ -671,7 +664,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   }
 
   // It's worth trying to load-balance...
-  int _WvPrGrp = mindiv(N, CuCount*YTILE, WvPrGrp);
+  int _WvPrGrp = mindiv(N, CuCount * YTILE, WvPrGrp);
 
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
@@ -716,7 +709,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   __syncthreads();
 
   if (threadIdx.y >= _WvPrGrp) return;
-  
+
   float sum[M][YTILE];
 
   //----------------------------------------------------
@@ -955,7 +948,8 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   }
 
   // It's worth trying to load-balance...
-  int _WvPrGrp = mindiv(N, CuCount*YTILE, WvPrGrp);
+  int _WvPrGrp = mindiv(N, CuCount * YTILE, WvPrGrp);
+  if (threadIdx.y >= _WvPrGrp) return;
 
   //----------------------------------------------------
   // Indexing function into the column of weight matrix B
@@ -1002,8 +996,6 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   __syncthreads();
   #endif
 
-  #define YW (YTILE * WvPrGrp)
-  #define TWC (THRDS * WvPrGrp * A_CHUNK)
   #define TUC (THRDS * UNRL * A_CHUNK)
   uint32_t kBase = 0;
   // find biggest k size that fits in LDS
@@ -1034,6 +1026,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   //   working on the next set of available columns
   //----------------------------------------------------
   #ifdef PCML
+  int YW = (YTILE * _WvPrGrp);
   uint32_t Nrndp = (N % YW == 0) ? N : (N - N % YW + YW);
   while (n < Nrndp) {
   #else
@@ -1083,7 +1076,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
       if ((k1 == 0) || (k1 == kBase + kFit)) {  // load next chunk of A[] to LDS
         if (k1 != 0) kBase += kFit;
         __syncthreads();
-        for (uint32_t k = 0; k < kFit; k += TWC) {
+        for (uint32_t k = 0; k < kFit; k += THRDS * _WvPrGrp * A_CHUNK) {
           uint32_t kOff = k + ((threadIdx.y * THRDS + threadIdx.x) * A_CHUNK);
           if (kBase + kOff >= K) break;
           if (kOff >= kFit) break;
@@ -1095,7 +1088,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
         }
         __syncthreads();
       }
-      if ((n >= N) || (threadIdx.y >= _WvPrGrp)) continue;
+      if (n >= N) continue;
   #endif
 
         // Fetch the weight matrix from memory!
@@ -1193,7 +1186,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     }
 
   #ifdef PCML
-    if ((n >= N) || (threadIdx.y >= _WvPrGrp)) {
+    if (n >= N) {
       n += CuCount * _WvPrGrp * YTILE;
       kBase = 0;
       continue;
