@@ -1,12 +1,20 @@
-
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <stdexcept>
 #include <algorithm>
 
-#if defined(__HIPCC__) && \
-    (defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__))
-  #define __HIP__MI300__
+#if defined(__HIPCC__) && (defined(__gfx90a__) || defined(__gfx940__) || \
+                           defined(__gfx941__) || defined(__gfx942__))
+  #define __HIP__MI300_MI250__
+#endif
+
+#if defined(NDEBUG)
+  #undef NDEBUG
+  #include <assert.h>
+  #define UNREACHABLE_CODE assert(false);
+  #define NDEBUG
+#else
+  #define UNREACHABLE_CODE assert(false);
 #endif
 
 constexpr int WARP_SIZE = 64;
@@ -349,7 +357,7 @@ __device__ __forceinline__ int mindiv(int N, int div1, int div2) {
   return rtn;
 }
 
-#if defined(__HIP__MI300__)  // TODO: Add NAVI support
+#if defined(__HIP__MI300_MI250__)  // TODO: Add NAVI support
 // This version targets cases where A[] fits LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void __launch_bounds__(WvPrGrp* THRDS)
@@ -621,16 +629,16 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     //}
   }
 }
-#else   // !defined(__HIP__MI300__) TODO: Add NAVI support
+#else   // !defined(__HIP__MI300_MI250__) TODO: Add NAVI support
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void wvSpltK_hf_sml_(const int K, const int N, const DTYPE* B,
                                 const DTYPE* __restrict__ A, DTYPE* C,
                                 const int CuCount) {
-  assert(false);
+  UNREACHABLE_CODE
 }
-#endif  // defined(__HIP__MI300__) TODO: Add NAVI support
+#endif  // defined(__HIP__MI300_MI250__) TODO: Add NAVI support
 
-#if defined(__HIP__MI300__)  // TODO: Add NAVI support
+#if defined(__HIP__MI300_MI250__)  // TODO: Add NAVI support
 // This version targets cases where A[] marginally exceeds LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void __launch_bounds__(WvPrGrp* THRDS)
@@ -904,16 +912,16 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
   }
 }
 
-#else   // !defined(__HIP__MI300__) TODO: Add NAVI support
+#else   // !defined(__HIP__MI300_MI250__) TODO: Add NAVI support
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void wvSpltK_hf_(const int K, const int N, const DTYPE* B,
                             const DTYPE* __restrict__ A, DTYPE* C,
                             const int CuCount) {
-  assert(false);
+  UNREACHABLE_CODE
 }
-#endif  // defined(__HIP__MI300__) TODO: Add NAVI support
+#endif  // defined(__HIP__MI300_MI250__) TODO: Add NAVI support
 
-#if defined(__HIP__MI300__)  // TODO: Add NAVI support
+#if defined(__HIP__MI300_MI250__)  // TODO: Add NAVI support
 // This version targets big A[] cases, where it is much larger than LDS capacity
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void __launch_bounds__(WvPrGrp* THRDS)
@@ -1241,14 +1249,14 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     }
   }
 }
-#else   // !defined(__HIP__MI300__) TODO: Add NAVI support
+#else   // !defined(__HIP__MI300_MI250__) TODO: Add NAVI support
 template <int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int UNRL, int M>
 __global__ void wvSpltK_hf_big_(const int K, const int N, const DTYPE* B,
                                 const DTYPE* __restrict__ A, DTYPE* C,
                                 const int CuCount) {
-  assert(false);
+  UNREACHABLE_CODE
 }
-#endif  // defined(__HIP__MI300__) TODO: Add NAVI support
+#endif  // defined(__HIP__MI300_MI250__) TODO: Add NAVI support
 
 void wvSpltK_(void* in_a, void* in_b, void* out_c, const int M_in,
               const int K_in, const int N_in, cudaStream_t stream,
