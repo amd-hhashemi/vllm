@@ -2248,42 +2248,13 @@ bool PCML = true;//(K * M_in > 32*1024);
     commitColumn[i] = 1;
   }
 
-  int ETILE = (CuCount * WvPrGrp ) / (N/YTILE); // bump up etile to fill machine
-
-  if (ETILE < 1) {  // if already more work than machine, then lets set ETILE for parallelsim...                                                                                                        //Heuristic: How many times is first expert repeated.
-	    //           We will use this to optimize column parallelism
-	    int e1 = expert_ids[0]; int ecntr = 1; 
-	    while(e1 == expert_ids[ecntr++]);
-	    ETILE = min(ecntr, 64);
-  }    
-
-  const int num_tblk = num_tokens_post_padded[0] / M_BLOCK;
+  int ETILE = num_tokens_post_padded[0] / M_BLOCK;
   
-  // its worth spending time trying to load balance for this num_tokens...
-  if ((CuCount/(ETILE*2) > 0) && (ETILE>1) && (num_tblk>0))// TODO: make sure all overflow/inf conditions are avoided 
-  {
-    int nPrRnd0 = ((CuCount/(ETILE))*WvPrGrp)*YTILE; 
-    int nRnds0 = (N + nPrRnd0 - 1 ) / nPrRnd0; 
-    int tRnds0 = (num_tblk + (ETILE) - 1) / (ETILE);
-    int rnds0 = nRnds0 * tRnds0;
+  uint32_t ne = (blockIdx.x * WvPrGrp + threadIdx.y);
 
-    int nPrRnd1n = ((CuCount/(ETILE-1))*WvPrGrp)*YTILE; 
-    int nRnds1n = (N + nPrRnd1n - 1 ) / nPrRnd1n; 
-    int tRnds1n = (num_tblk + (ETILE-1) - 1) / (ETILE-1);
-    int rnds1n = nRnds1n * tRnds1n;
+  uint32_t n = ((ne % WvPrGrp) + ((ne / WvPrGrp) / ETILE ) * WvPrGrp) * YTILE;
+  uint32_t e = (ne / WvPrGrp) % ETILE;
 
-    int nPrRnd1p = ((CuCount/(ETILE+1))*WvPrGrp)*YTILE; 
-    int nRnds1p = (N + nPrRnd1p - 1 ) / nPrRnd1p; 
-    int tRnds1p = (num_tblk + (ETILE+1) - 1) / (ETILE+1);
-    int rnds1p = nRnds1p * tRnds1p;
-    
-    int etl = ETILE;
-    if (rnds0 > rnds1n)  { etl = ETILE-1; rnds0 = rnds1n; }
-    if (rnds0 > rnds1p)  { etl = ETILE+1; rnds0 = rnds1p; }
-    ETILE = etl;
-  }
-
-  uint32_t n = ((blockIdx.x/ETILE) * WvPrGrp + threadIdx.y) * YTILE;
 
 /*  if (n < N && (n + YTILE) >= N) {
     uint32_t startColumn = N - YTILE;
@@ -2338,18 +2309,19 @@ bool PCML = true;//(K * M_in > 32*1024);
   if (!PCML) Nrndp = N; //unless its not peicmeal
   while (n < Nrndp) {
     kBase = 0;
-    for (uint32_t e = (blockIdx.x % ETILE) * M_BLOCK; e < num_tokens_post_padded[0]; e+=M_BLOCK*ETILE) { 
-    kBase = 0;
+    {
+    //for (uint32_t e = (blockIdx.x % ETILE) * M_BLOCK; e < num_tokens_post_padded[0]; e+=M_BLOCK*ETILE) {
+    //kBase = 0;
     
 #pragma unroll M_BLOCK
     for (uint32_t m=0; m<M_BLOCK; m++) {
 	// get the list of Ms corresponding to this M_BLOCK
-        offs_token[m] = sorted_token_ids[e+m];
+        offs_token[m] = sorted_token_ids[e*M_BLOCK+m];
         token_mask[m] = offs_token[m] < num_valid_tokens;
     }
     
     //set the expert for this M_BLOCK
-    off_experts = expert_ids[e/M_BLOCK];
+    off_experts = expert_ids[e];
 
 #ifdef USEMFMA 
     //asm("v_accvgpr_write %0, 0x0" : "=a"(sum4[0]) : ); // this triggers hip use of acc registers
@@ -2417,7 +2389,7 @@ bool PCML = true;//(K * M_in > 32*1024);
     if (n >= N) continue;
     
     int k1 = k1_;
-    if (shflk) k1 = kBase + (((k1_-kBase) + kShfl) % kFit ); // shfl loads within this lane, to reduce temporal hotspotting
+    //if (shflk) k1 = kBase + (((k1_-kBase) + kShfl) % kFit ); // shfl loads within this lane, to reduce temporal hotspotting
 
         #define StgMfma4(_LN) { \
           for (uint32_t _t = 0; _t < A_CHUNK/mfmaTILEk; _t++) { \
@@ -3273,7 +3245,9 @@ bool PCML = true;//(K * M_in > 32*1024);
 
     }
 
-    n += (CuCount / ETILE) * WvPrGrp * YTILE;
+    ne += CuCount * WvPrGrp;
+    n   = ((ne % WvPrGrp) + ((ne / WvPrGrp) / ETILE ) * WvPrGrp) * YTILE;
+    e   = (ne / WvPrGrp) % ETILE;
 
     // Check whether there will be fragmenation!
     // This will happen only for the last wave!
