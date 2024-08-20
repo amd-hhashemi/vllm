@@ -475,7 +475,7 @@ def fused_experts(hidden_states: torch.Tensor,
     #if (m_blck_sz >= 12):
     #    m_blck_sz = 16
 
-    m_blck_sz = 16  # all calls go to wvSplitK_mfma16x16
+    m_blck_sz = 32  # all calls go to wvSplitK_mfma16x16
 
     #if hidden_states.shape[0] <= WVSPLTK_M_THRSHLD \
     #        and hidden_states.shape[1] % 8 == 0 \

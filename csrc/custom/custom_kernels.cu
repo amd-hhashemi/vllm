@@ -2187,7 +2187,7 @@ wvSpltK_fsdMoe_hf_(
 #define mfmaTILEn 16 
 #define mfmaTILEk 4
 //#undef WvPrGrp
-//#define WvPrGrp 8
+//#define WvPrGrp 4
 #define USEMFMA
 //#define PIPELINED_33334x
 //#define PIPELINED_556x
@@ -2253,7 +2253,8 @@ bool PCML = true;//(K * M_in > 32*1024);
   uint32_t ne = (blockIdx.x * WvPrGrp + threadIdx.y);
 
   uint32_t n = ((ne % WvPrGrp) + ((ne / WvPrGrp) / ETILE ) * WvPrGrp) * YTILE;
-  uint32_t e = (ne / WvPrGrp) % ETILE;
+  //uint32_t e = (ne / WvPrGrp) % ETILE;
+  uint32_t e = blockIdx.x % ETILE;
 
 
 /*  if (n < N && (n + YTILE) >= N) {
@@ -2289,7 +2290,7 @@ bool PCML = true;//(K * M_in > 32*1024);
 
 #ifdef USEMFMA
     using float4_ = __attribute__( (__vector_size__(4 * sizeof(float)) )) float;
-    float4_ sum4;
+    float4_ sum4[M_BLOCK/mfmaTILEn];
 #else
   float sum[M_BLOCK][YTILE];
 #endif
@@ -2298,8 +2299,6 @@ bool PCML = true;//(K * M_in > 32*1024);
   //offs_token_id = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
   //offs_token = tl.load(sorted_token_ids_ptr + offs_token_id)
   //token_mask = offs_token < num_valid_tokens
-  uint32_t offs_token[M_BLOCK];
-  bool token_mask[M_BLOCK];  // add to A[] /top_k*k
   uint32_t off_experts;  // add to B[] *K*N loads
 
   int kShfl = A_CHUNK * THRDS * ( threadIdx.y + (threadIdx.x/16));
@@ -2313,19 +2312,15 @@ bool PCML = true;//(K * M_in > 32*1024);
     //for (uint32_t e = (blockIdx.x % ETILE) * M_BLOCK; e < num_tokens_post_padded[0]; e+=M_BLOCK*ETILE) {
     //kBase = 0;
     
-#pragma unroll M_BLOCK
-    for (uint32_t m=0; m<M_BLOCK; m++) {
-	// get the list of Ms corresponding to this M_BLOCK
-        offs_token[m] = sorted_token_ids[e*M_BLOCK+m];
-        token_mask[m] = offs_token[m] < num_valid_tokens;
-    }
-    
+//#pragma unroll M_BLOCK
+   
     //set the expert for this M_BLOCK
     off_experts = expert_ids[e];
 
 #ifdef USEMFMA 
     //asm("v_accvgpr_write %0, 0x0" : "=a"(sum4[0]) : ); // this triggers hip use of acc registers
-    sum4 = {0};
+    for (int m16 = 0; m16 < M_BLOCK/mfmaTILEn; m16++) 
+      sum4[m16] = {0};
 #else
     for (int i = 0; i < YTILE; i++)
       for (int m = 0; m < M_BLOCK; m++) 
@@ -2346,7 +2341,17 @@ bool PCML = true;//(K * M_in > 32*1024);
                 if (k1_ != 0) kBase += kFit;
 		shflk = (kBase + kFit <= K); //don't shfl k (for hotspot avoidance) if this block doesn't cover full range
 		__syncthreads();
-                 int m = threadIdx.y % M_BLOCK;
+                for (uint32_t m16 = 0; m16 < M_BLOCK/WvPrGrp; m16++) {
+                 int m = threadIdx.y % M_BLOCK + m16*WvPrGrp;
+
+                uint32_t offs_token[M_BLOCK];
+                bool token_mask[M_BLOCK];  // add to A[] /top_k*k
+                //for (uint32_t m=0; m<M_BLOCK; m++) {
+                  // get the list of Ms corresponding to this M_BLOCK
+                  offs_token[m] = sorted_token_ids[e*M_BLOCK+m];
+                  token_mask[m] = offs_token[m] < num_valid_tokens;
+                //}
+
                  if (token_mask[m])
                  for (uint32_t k = 0; k < kFit; k += TWC/M_BLOCK) {
                     uint32_t kOff = k + ((((threadIdx.y/M_BLOCK) * THRDS + threadIdx.x) ) * A_CHUNK);    
@@ -2381,6 +2386,7 @@ bool PCML = true;//(K * M_in > 32*1024);
 		    //}
 #endif
 		}
+	        }
                 __syncthreads();
 	}
     } 
@@ -2391,12 +2397,12 @@ bool PCML = true;//(K * M_in > 32*1024);
     int k1 = k1_;
     //if (shflk) k1 = kBase + (((k1_-kBase) + kShfl) % kFit ); // shfl loads within this lane, to reduce temporal hotspotting
 
-        #define StgMfma4(_LN) { \
+        #define StgMfma4(_M,_LN,_D) { \
           for (uint32_t _t = 0; _t < A_CHUNK/mfmaTILEk; _t++) { \
-            sum4 = __builtin_amdgcn_mfma_f32_16x16x16f16( \
+            sum4[_D] = __builtin_amdgcn_mfma_f32_16x16x16f16( \
             bigB[0][k2].B[_LN].hT[_t], \
-	    bigA[_LN][k2].hT[_t], \
-	    sum4, 0, 0, 0); \
+	    bigA[_LN+_M*mfmaTILEn][k2].hT[_t], \
+	    sum4[_D], 0, 0, 0); \
           } \
         }
 
@@ -2410,24 +2416,28 @@ bool PCML = true;//(K * M_in > 32*1024);
 	const half* B_ = &B[(n + 0) * K + k_ + off_experts*K*N];
         for (int y=0; y<YTILE; y++) // should this be M_BLOCK?
 	    bigB[0][k2].B[y].hC = (loadnt((halfC*)(&B_[y * K])));
-      }
-#pragma unroll
-      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-        uint32_t k_ = k + kSprd;
-        if (k_ >= K) break;
+//      }
+//#pragma unroll
+//      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
+//        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+//        uint32_t k_ = k + kSprd;
+//        if (k_ >= K) break;
         for (int m = 0; m < M_BLOCK; m++) 
 	{
           bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m][k2] = *((const bigType*)(&(s[k - kBase + 
+	  //              ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	  //              ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
-      }
-#pragma unroll
-      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-        uint32_t k_ = k + kSprd;
-        if (k_ >= K) break;
+//      }
+//#pragma unroll
+//      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
+//        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+//        uint32_t k_ = k + kSprd;
+//        if (k_ >= K) break;
 	for (int l=0; l<mfmaTILEn; l++)
-          StgMfma4(l);
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+          StgMfma4(m16,l%mfmaTILEn, m16);
       }
 
 
@@ -2449,18 +2459,26 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-        for (int m = 0; m < M_BLOCK/2; m++) 
-	{
-          bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	}
+	
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+        for (int m = 0; m < mfmaTILEn/2; m++) 
+          bigA[m+mfmaTILEn*m16][k2] = *((const bigType*)(&(s[k_ - kBase + (m + mfmaTILEn*m16)*kFit ])));
+        //  bigA[M_BLOCK/2+m][k2] = *((const bigType*)(&(s[k_-kBase + (M_BLOCK/2+m)*kFit ])));
+          //bigA[m][k2] = *((const bigType*)(&(s[k - kBase + 
+	  //              ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	  //              ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
+	//}
       //}
 //#pragma unroll
       //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
       //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
       //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
       //  if (k_ >= K) break;
-      for (int l=0; l<mfmaTILEn/2; l++)
-          StgMfma4(l);
+      
+	for (int l=0; l<mfmaTILEn/2; l++) 
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+          StgMfma4(m16,l%mfmaTILEn, m16);
+          //StgMfma4(1,l%mfmaTILEn, 1);
       }
 
 ///////////////////////////ROUND 2//////////////////////////
@@ -2479,18 +2497,28 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-        for (int m = M_BLOCK/2; m < M_BLOCK; m++) 
+        /*for (int m = mfmaTILEn/2; m < mfmaTILEn; m++) 
 	{
-          bigA[m-M_BLOCK/2][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	}
+          bigA[m-mfmaTILEn/2][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[M_BLOCK/2+m-mfmaTILEn/2][k2] = *((const bigType*)(&(s[k_-kBase + (M_BLOCK/2+m)*kFit ])));
+          //bigA[m-M_BLOCK/2][k2] = *((const bigType*)(&(s[k - kBase + 
+	  //              ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	  //              ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
+
+	}*/
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+        for (int m = mfmaTILEn/2; m < mfmaTILEn; m++) 
+          bigA[m-(mfmaTILEn/2)+(mfmaTILEn*m16)][k2] = *((const bigType*)(&(s[k_ - kBase + (m + mfmaTILEn*m16)*kFit ])));
       //}
 //#pragma unroll
       //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
       //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
       //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
       //  if (k_ >= K) break;
-      for (int l=0; l<mfmaTILEn/2; l++)
-          StgMfma4(l);
+	for (int l=0; l<mfmaTILEn/2; l++)
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+          StgMfma4(m16,l%mfmaTILEn, m16);
+          //StgMfma4(1,l%mfmaTILEn, 1);
       }
 
 #elif defined(PIPELINED4x) //4x
@@ -2511,18 +2539,30 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-        for (int m = 0; m < M_BLOCK/4; m++) 
+        /*for (int m = 0; m < M_BLOCK/4; m++) 
 	{
           bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	}
-      //}
-//#pragma unroll
-      //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+          //bigA[m][k2] = *((const bigType*)(&(s[k - kBase + 
+	  //              ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	  //              ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
+	}*/
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+        for (int m = 0; m < mfmaTILEn/4; m++) 
+          bigA[m-(0)+(mfmaTILEn*m16)][k2] = *((const bigType*)(&(s[k_ - kBase + (m + mfmaTILEn*m16)*kFit ])));
+
+      }
+#pragma unroll
+      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
+#pragma unroll
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
 	for (int l=0; l<mfmaTILEn/4; l++)
-          StgMfma4(l);
+          StgMfma4(m16,l%mfmaTILEn, m16);
+
+	//for (int l=0; l<M_BLOCK/4; l++)
+        //  StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+0)/mfmaTILEn);
       }
 
 ///////////////////////////ROUND 2//////////////////////////
@@ -2541,18 +2581,30 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-        for (int m = M_BLOCK/4; m < M_BLOCK/2; m++) 
+        /*for (int m = M_BLOCK/4; m < M_BLOCK/2; m++) 
 	{
           bigA[m-M_BLOCK/4][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	}
-      //}
-//#pragma unroll
-      //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+          //bigA[m-M_BLOCK/4][k2] = *((const bigType*)(&(s[k - kBase + 
+	  //      	  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	  //              ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
+	}*/
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+        for (int m = mfmaTILEn/4; m < mfmaTILEn/2; m++) 
+          bigA[m-(mfmaTILEn/4)+(mfmaTILEn*m16)][k2] = *((const bigType*)(&(s[k_ - kBase + (m + mfmaTILEn*m16)*kFit ])));
+
+      }
+#pragma unroll
+      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
+#pragma unroll
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
 	for (int l=0; l<mfmaTILEn/4; l++)
-          StgMfma4(l);
+          StgMfma4(m16,l%mfmaTILEn, m16);
+
+	//for (int l=0; l<M_BLOCK/4; l++)
+        //  StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+M_BLOCK/4)/mfmaTILEn);
       }
 ///////////////////////////ROUND 3//////////////////////////
 #pragma unroll
@@ -2570,18 +2622,30 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-        for (int m = M_BLOCK/2; m < 3*M_BLOCK/4; m++) 
+        /*for (int m = M_BLOCK/2; m < 3*M_BLOCK/4; m++) 
 	{
           bigA[m-M_BLOCK/2][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	}
-      //}
-//#pragma unroll
-      //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+          //bigA[m-M_BLOCK/2][k2] = *((const bigType*)(&(s[k - kBase + 
+	  //    	  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	  //              ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
+	}*/
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+        for (int m = mfmaTILEn/2; m < 3*mfmaTILEn/4; m++) 
+          bigA[m-(mfmaTILEn/2)+(mfmaTILEn*m16)][k2] = *((const bigType*)(&(s[k_ - kBase + (m + mfmaTILEn*m16)*kFit ])));
+
+      }
+#pragma unroll
+      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
+#pragma unroll
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
 	for (int l=0; l<mfmaTILEn/4; l++)
-          StgMfma4(l);
+          StgMfma4(m16,l%mfmaTILEn, m16);
+
+	//for (int l=0; l<M_BLOCK/4; l++)
+        //  StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+2*M_BLOCK/4)/mfmaTILEn);
       }
 
 ///////////////////////////ROUND 4//////////////////////////
@@ -2600,18 +2664,30 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-        for (int m = 3*M_BLOCK/4; m < M_BLOCK; m++) 
+        /*for (int m = 3*M_BLOCK/4; m < M_BLOCK; m++) 
 	{
           bigA[m-3*M_BLOCK/4][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
-	}
-      //}
-//#pragma unroll
-      //for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+          //bigA[m-3*M_BLOCK/4][k2] = *((const bigType*)(&(s[k - kBase + 
+	  //		  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	  //              ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
+	}*/
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
+        for (int m = 3*mfmaTILEn/4; m < mfmaTILEn; m++) 
+          bigA[m-(3*mfmaTILEn/4)+(mfmaTILEn*m16)][k2] = *((const bigType*)(&(s[k_ - kBase + (m + mfmaTILEn*m16)*kFit ])));
+
+      }
+#pragma unroll
+      for (uint32_t k2 = 0; k2 < UNRL; k2++) {
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
+#pragma unroll
+	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
 	for (int l=0; l<mfmaTILEn/4; l++)
-          StgMfma4(l);
+          StgMfma4(m16,l%mfmaTILEn, m16);
+
+	//for (int l=0; l<M_BLOCK/4; l++)
+        //  StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+3*M_BLOCK/4)/mfmaTILEn);
       }
 
 #elif defined(PIPELINED_33334x) //3334x
@@ -2879,7 +2955,10 @@ bool PCML = true;//(K * M_in > 32*1024);
         if (k_ >= K) break;
         for (int m = 0; m < M_BLOCK/8; m++) 
 	{
-          bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[m][k2] = *((const bigType*)(&(s[k - kBase + 
+			  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	                  ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
       }
 #pragma unroll
@@ -2887,8 +2966,8 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-	for (int l=0; l<mfmaTILEn/8; l++)
-          StgMfma4(l);
+	for (int l=0; l<M_BLOCK/8; l++)
+          StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+0*M_BLOCK/8)/mfmaTILEn);
       }
 
 ///////////////////////////ROUND 2//////////////////////////
@@ -2909,7 +2988,10 @@ bool PCML = true;//(K * M_in > 32*1024);
         if (k_ >= K) break;
         for (int m = M_BLOCK/8; m < 2*M_BLOCK/8; m++) 
 	{
-          bigA[m-M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m-M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[m-M_BLOCK/8][k2] = *((const bigType*)(&(s[k - kBase + 
+			  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	                  ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
       }
 #pragma unroll
@@ -2917,8 +2999,8 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-	for (int l=0; l<mfmaTILEn/8; l++)
-          StgMfma4(l);
+	for (int l=0; l<M_BLOCK/8; l++)
+          StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+1*M_BLOCK/8)/mfmaTILEn);
       }
 ///////////////////////////ROUND 3//////////////////////////
 #pragma unroll
@@ -2938,7 +3020,10 @@ bool PCML = true;//(K * M_in > 32*1024);
         if (k_ >= K) break;
         for (int m = 2*M_BLOCK/8; m < 3*M_BLOCK/8; m++) 
 	{
-          bigA[m-2*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m-2*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[m-2*M_BLOCK/8][k2] = *((const bigType*)(&(s[k - kBase + 
+			  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	                  ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
       }
 #pragma unroll
@@ -2946,8 +3031,8 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-	for (int l=0; l<mfmaTILEn/8; l++)
-          StgMfma4(l);
+	for (int l=0; l<M_BLOCK/8; l++)
+          StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+2*M_BLOCK/8)/mfmaTILEn);
       }
 
 ///////////////////////////ROUND 4//////////////////////////
@@ -2968,7 +3053,10 @@ bool PCML = true;//(K * M_in > 32*1024);
         if (k_ >= K) break;
         for (int m = 3*M_BLOCK/8; m < 4*M_BLOCK/8; m++) 
 	{
-          bigA[m-3*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m-3*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[m-3*M_BLOCK/8][k2] = *((const bigType*)(&(s[k - kBase + 
+			  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	                  ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
       }
 #pragma unroll
@@ -2976,8 +3064,8 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-	for (int l=0; l<mfmaTILEn/8; l++)
-          StgMfma4(l);
+	for (int l=0; l<M_BLOCK/8; l++)
+          StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+3*M_BLOCK/8)/mfmaTILEn);
       }
 
 ///////////////////////////ROUND 5//////////////////////////
@@ -2998,7 +3086,10 @@ bool PCML = true;//(K * M_in > 32*1024);
         if (k_ >= K) break;
         for (int m = 4*M_BLOCK/8; m < 5*M_BLOCK/8; m++) 
 	{
-          bigA[m-4*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m-4*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[m-4*M_BLOCK/8][k2] = *((const bigType*)(&(s[k - kBase + 
+			  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	                  ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
       }
 #pragma unroll
@@ -3006,8 +3097,8 @@ bool PCML = true;//(K * M_in > 32*1024);
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + kSprd;
         if (k_ >= K) break;
-	for (int l=0; l<mfmaTILEn/8; l++)
-          StgMfma4(l);
+	for (int l=0; l<M_BLOCK/8; l++)
+          StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+4*M_BLOCK/8)/mfmaTILEn);
       }
 
 ///////////////////////////ROUND 6//////////////////////////
@@ -3028,7 +3119,10 @@ bool PCML = true;//(K * M_in > 32*1024);
         if (k_ >= K) break;
         for (int m = 5*M_BLOCK/8; m < 6*M_BLOCK/8; m++) 
 	{
-          bigA[m-5*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m-5*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[m-5*M_BLOCK/8][k2] = *((const bigType*)(&(s[k - kBase + 
+			  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	                  ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
       //}
 //#pragma unroll
@@ -3036,8 +3130,8 @@ bool PCML = true;//(K * M_in > 32*1024);
       //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
       //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
       //  if (k_ >= K) break;
-	for (int l=0; l<mfmaTILEn/8; l++)
-          StgMfma4(l);
+	for (int l=0; l<M_BLOCK/8; l++)
+          StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+5*M_BLOCK/8)/mfmaTILEn);
       }
 
 ///////////////////////////ROUND 6//////////////////////////
@@ -3058,7 +3152,10 @@ bool PCML = true;//(K * M_in > 32*1024);
         if (k_ >= K) break;
         for (int m = 6*M_BLOCK/8; m < 7*M_BLOCK/8; m++) 
 	{
-          bigA[m-6*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m-6*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[m-6*M_BLOCK/8][k2] = *((const bigType*)(&(s[k - kBase + 
+			  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	                  ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
       //}
 //#pragma unroll
@@ -3066,8 +3163,8 @@ bool PCML = true;//(K * M_in > 32*1024);
       //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
       //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
       //  if (k_ >= K) break;
-	for (int l=0; l<mfmaTILEn/8; l++)
-          StgMfma4(l);
+	for (int l=0; l<M_BLOCK/8; l++)
+          StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+6*M_BLOCK/8)/mfmaTILEn);
       }
 ///////////////////////////ROUND 7//////////////////////////
 #pragma unroll
@@ -3087,7 +3184,10 @@ bool PCML = true;//(K * M_in > 32*1024);
         if (k_ >= K) break;
         for (int m = 7*M_BLOCK/8; m < 8*M_BLOCK/8; m++) 
 	{
-          bigA[m-7*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          //bigA[m-7*M_BLOCK/8][k2] = *((const bigType*)(&(s[k_-kBase + m*kFit ])));
+          bigA[m-7*M_BLOCK/8][k2] = *((const bigType*)(&(s[k - kBase + 
+			  ((m/16)*mfmaTILEn + (threadIdx.x%mfmaTILEn)) * kFit +
+	                  ((threadIdx.x/mfmaTILEn)*mfmaTILEn + (m%16)) * A_CHUNK ])));
 	}
       //}
 //#pragma unroll
@@ -3095,8 +3195,8 @@ bool PCML = true;//(K * M_in > 32*1024);
       //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
       //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
       //  if (k_ >= K) break;
-	for (int l=0; l<mfmaTILEn/8; l++)
-          StgMfma4(l);
+	for (int l=0; l<M_BLOCK/8; l++)
+          StgMfma4(l/mfmaTILEn,l%mfmaTILEn,(l+7*M_BLOCK/8)/mfmaTILEn);
       }
 
 #else  // !PIPELINED
@@ -3182,20 +3282,28 @@ bool PCML = true;//(K * M_in > 32*1024);
 
     //That's enough walking K. Let's write this puppy out...
 #ifdef USEMFMA
-    //for (int m = 0; m < M_BLOCK; m++)
+    for (int m16 = 0; m16 < M_BLOCK/mfmaTILEn; m16++) {
     //    if (threadIdx.x % mfmaTILEn == m % mfmaTILEn)
-	    int m = threadIdx.x % mfmaTILEn;
+	    int m = threadIdx.x % mfmaTILEn+m16*16;
+
+                uint32_t offs_token[M_BLOCK];
+                bool token_mask[M_BLOCK];  // add to A[] /top_k*k
+                  // get the list of Ms corresponding to this M_BLOCK
+                  offs_token[m] = sorted_token_ids[e*M_BLOCK+m];
+                  token_mask[m] = offs_token[m] < num_valid_tokens;
+
 	    if (token_mask[m]) {
 	      const int thisTokOff = offs_token[m];
               #pragma unroll 4
               for (int y = 0; y < 4; y++) {
   	        if (mul_routed_weight)
-                    sum4[y] *= topk_weights[thisTokOff];//token_mask[m] ? topk_weights[offs_token[m]] : 0;
+                    sum4[m16][y] *= topk_weights[thisTokOff];//token_mask[m] ? topk_weights[offs_token[m]] : 0;
                 int oidx = n + (threadIdx.x/mfmaTILEn)*mfmaTILEk + y + thisTokOff * N;
                 //if (commitColumn[i]) 
-                    C[oidx] = __float2half(sum4[y]);
+                    C[oidx] = __float2half(sum4[m16][y]);
 	      }
            }
+    }
 #else
 
     //----------------------------------------------------
@@ -3318,6 +3426,9 @@ void wvSpltK_fsdMoe_(void* in_a, void* in_b, void* out_c,
       break;
     case 16:
       wvSpltK_fsdMoe_hf_mfma16_<16,16><<<grid, block, 0, stream>>>(a, b, c, topk_weights_, topk_ids_, sorted_token_ids_, expert_ids_, num_tokens_post_padded_, M_in, N_in, K_in, E, num_valid_tokens, stride_am, stride_ak, stride_be, stride_bk, stride_bn, stride_cm, stride_cn, mul_routed_weight, top_k, CuCount);
+      break;
+    case 32:
+      wvSpltK_fsdMoe_hf_mfma16_<32,16><<<grid, block, 0, stream>>>(a, b, c, topk_weights_, topk_ids_, sorted_token_ids_, expert_ids_, num_tokens_post_padded_, M_in, N_in, K_in, E, num_valid_tokens, stride_am, stride_ak, stride_be, stride_bk, stride_bn, stride_cm, stride_cn, mul_routed_weight, top_k, CuCount);
       break;
 
   }
