@@ -2193,6 +2193,36 @@ wvSpltK_fsdMoe_hf_(
 //#define PIPELINED_556x
 //#define PIPELINED4x
 
+__device__ __forceinline__ int mindiv(int N, int div1, int div2) {
+  int nPrRnd = div1 * div2;
+  int rnds0 = N / nPrRnd;
+  nPrRnd -= div1 * 3;
+  int rnds3 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds4 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds5 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds6 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds7 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds8 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rnds9 = N / nPrRnd;
+  nPrRnd -= div1;
+  int rtn = div2;
+  if (rnds0 == rnds3) rtn = div2 - 3;
+  if (rnds0 == rnds4) rtn = div2 - 4;
+  if (rnds0 == rnds5) rtn = div2 - 5;
+  if (rnds0 == rnds6) rtn = div2 - 6;
+  if (rnds0 == rnds7) rtn = div2 - 7;
+  if (rnds0 == rnds8) rtn = div2 - 8;
+  if (rnds0 == rnds9) rtn = div2 - 9;
+  return rtn;
+}
+
+
 template <int M_BLOCK, int YTILE>
 __global__ void 
 __launch_bounds__(WvPrGrp * THRDS)
@@ -2240,7 +2270,6 @@ bool PCML = true;//(K * M_in > 32*1024);
 	halfCxT  hCT;
   };
 
-
   __shared__ half s[1024 * 32];
 
   uint32_t commitColumn[YTILE];
@@ -2249,13 +2278,14 @@ bool PCML = true;//(K * M_in > 32*1024);
   }
 
   int ETILE = num_tokens_post_padded[0] / M_BLOCK;
-  
-  uint32_t ne = (blockIdx.x * WvPrGrp + threadIdx.y);
 
-  uint32_t n = ((ne % WvPrGrp) + ((ne / WvPrGrp) / ETILE ) * WvPrGrp) * YTILE;
+  // It's worth trying to load-balance...
+  int _WvPrGrp = WvPrGrp;//mindiv(N*ETILE, CuCount * YTILE, WvPrGrp);
+
+  uint32_t ne = (blockIdx.x * _WvPrGrp + threadIdx.y);
+  uint32_t n = ((ne % _WvPrGrp) + ((ne / _WvPrGrp) / ETILE ) * _WvPrGrp) * YTILE;
   //uint32_t e = (ne / WvPrGrp) % ETILE;
   uint32_t e = blockIdx.x % ETILE;
-
 
 /*  if (n < N && (n + YTILE) >= N) {
     uint32_t startColumn = N - YTILE;
@@ -2267,7 +2297,7 @@ bool PCML = true;//(K * M_in > 32*1024);
 
   if (!PCML) {
   for (uint32_t k = 0; k < min(K * M_in, 32 * 1024);
-       k += THRDS * WvPrGrp * A_CHUNK) {
+       k += THRDS * _WvPrGrp * A_CHUNK) {
     uint32_t k_in = k + ((threadIdx.y * THRDS + threadIdx.x) * A_CHUNK);
 
     if (k_in >= min(K * M_in, 32 * 1024)) break;
@@ -2277,8 +2307,7 @@ bool PCML = true;//(K * M_in > 32*1024);
   __syncthreads();
   }
 
-  int YW = (YTILE * WvPrGrp);
-  int TWC = (THRDS * WvPrGrp * A_CHUNK);
+  int TWC = (THRDS * _WvPrGrp * A_CHUNK);
   int TUC = (THRDS * UNRL * A_CHUNK);
   uint32_t kBase = 0;
   //find biggest k size that fits in LDS
@@ -2301,9 +2330,10 @@ bool PCML = true;//(K * M_in > 32*1024);
   //token_mask = offs_token < num_valid_tokens
   uint32_t off_experts;  // add to B[] *K*N loads
 
-  int kShfl = A_CHUNK * THRDS * ( threadIdx.y + (threadIdx.x/16));
+  //int kShfl = A_CHUNK * THRDS * ( threadIdx.y + (threadIdx.x/16));
   int kSprd = A_CHUNK * ( threadIdx.x );
 
+  int YW = (YTILE * _WvPrGrp);
   uint32_t Nrndp = (N%YW==0) ? N : (N-N%YW+YW); // Note: All waves in the group need to stay alive to the bitter end, just in case they're needed for cooperative loading of next chunk of A[] into LDS. Such Zomby waves are prevented from doing any real work with continues in the loop below.   
   if (!PCML) Nrndp = N; //unless its not peicmeal
   while (n < Nrndp) {
@@ -2341,8 +2371,8 @@ bool PCML = true;//(K * M_in > 32*1024);
                 if (k1_ != 0) kBase += kFit;
 		//shflk = (kBase + kFit <= K); //don't shfl k (for hotspot avoidance) if this block doesn't cover full range
 		__syncthreads();
-                for (uint32_t m16 = 0; m16 < M_BLOCK/WvPrGrp; m16++) {
-                 int m = threadIdx.y % M_BLOCK + m16*WvPrGrp;
+                for (uint32_t m16 = 0; m16 < M_BLOCK/_WvPrGrp; m16++) {
+                 int m = threadIdx.y % M_BLOCK + m16*_WvPrGrp;
 
                 uint32_t offs_token[M_BLOCK];
                 bool token_mask[M_BLOCK];  // add to A[] /top_k*k
@@ -2353,7 +2383,7 @@ bool PCML = true;//(K * M_in > 32*1024);
                 //}
 
                  if (token_mask[m])
-                 for (uint32_t k = 0; k < kFit; k += TWC/M_BLOCK) {
+                 for (uint32_t k = 0; k < kFit; k += THRDS*A_CHUNK) {
                     uint32_t kOff = k + ((((threadIdx.y/M_BLOCK) * THRDS + threadIdx.x) ) * A_CHUNK);    
                     if (kBase + kOff >= K) break;
                     if (kOff >= kFit) break;
@@ -2718,9 +2748,9 @@ bool PCML = true;//(K * M_in > 32*1024);
       }
 #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
 	//for (int l=0; l<3; l++)
         //  StgMfma4(l);
 	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
@@ -2754,9 +2784,9 @@ bool PCML = true;//(K * M_in > 32*1024);
       }
 #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
 	//for (int l=0; l<3; l++)
         //  StgMfma4(l);
 	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
@@ -2789,9 +2819,9 @@ bool PCML = true;//(K * M_in > 32*1024);
       }
 #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
 	//for (int l=0; l<3; l++)
         //  StgMfma4(l);
 	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
@@ -2825,9 +2855,9 @@ bool PCML = true;//(K * M_in > 32*1024);
       }
 #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
 	//for (int l=0; l<3; l++)
         //  StgMfma4(l);
 	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
@@ -2861,9 +2891,9 @@ bool PCML = true;//(K * M_in > 32*1024);
       }
 #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
-      //  uint32_t k = k1 + k2 * THRDS * A_CHUNK;
-      //  uint32_t k_ = k + threadIdx.x * A_CHUNK;
-      //  if (k_ >= K) break;
+        uint32_t k = k1 + k2 * THRDS * A_CHUNK;
+        uint32_t k_ = k + threadIdx.x * A_CHUNK;
+        if (k_ >= K) break;
 	//for (int l=0; l<4; l++)
         //  StgMfma4(l);
 	for (int m16=0; m16<M_BLOCK/mfmaTILEn; m16++)
@@ -2871,8 +2901,6 @@ bool PCML = true;//(K * M_in > 32*1024);
           StgMfma4(m16,l%mfmaTILEn, m16);
 
       }
-
-
 
 
 #elif defined(PIPELINED_556x) //556x
@@ -3384,9 +3412,9 @@ bool PCML = true;//(K * M_in > 32*1024);
 
     }
 
-    ne += CuCount * WvPrGrp;
-    n   = ((ne % WvPrGrp) + ((ne / WvPrGrp) / ETILE ) * WvPrGrp) * YTILE;
-    e   = (ne / WvPrGrp) % ETILE;
+    ne += CuCount * _WvPrGrp;
+    n   = ((ne % _WvPrGrp) + ((ne / _WvPrGrp) / ETILE ) * _WvPrGrp) * YTILE;
+    e   = (ne / _WvPrGrp) % ETILE;
 
     // Check whether there will be fragmenation!
     // This will happen only for the last wave!
