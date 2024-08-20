@@ -2187,11 +2187,11 @@ wvSpltK_fsdMoe_hf_(
 #define mfmaTILEn 16 
 #define mfmaTILEk 4
 //#undef WvPrGrp
-//#define WvPrGrp 4
+//#define WvPrGrp 15
 #define USEMFMA
-#define PIPELINED_33334x
+//#define PIPELINED_33334x
 //#define PIPELINED_556x
-//#define PIPELINED4x
+#define PIPELINED4x
 
 __device__ __forceinline__ int mindiv(int N, int div1, int div2) {
   int nPrRnd = div1 * div2;
@@ -2280,14 +2280,16 @@ bool PCML = true;//(K * M_in > 32*1024);
   int ETILE = num_tokens_post_padded[0] / M_BLOCK;
 
   // It's worth trying to load-balance...
-  int _WvPrGrp = WvPrGrp;//mindiv(N*ETILE, CuCount * YTILE, WvPrGrp);
+  int _WvPrGrp = mindiv(N*ETILE, CuCount * YTILE, WvPrGrp);
 
   uint32_t ne = (blockIdx.x * _WvPrGrp + threadIdx.y);
   uint32_t n = ((ne % _WvPrGrp) + ((ne / _WvPrGrp) / ETILE ) * _WvPrGrp) * YTILE;
-  //uint32_t e = (ne / WvPrGrp) % ETILE;
-  uint32_t e = blockIdx.x % ETILE;
+  uint32_t e = (ne / _WvPrGrp) % ETILE;
+  //uint32_t e = blockIdx.x % ETILE;
 
-/*  if (n < N && (n + YTILE) >= N) {
+  if (threadIdx.y >= _WvPrGrp) return;
+
+  /*  if (n < N && (n + YTILE) >= N) {
     uint32_t startColumn = N - YTILE;
     for (uint32_t i = 0; i < (n - startColumn); i++) {
       commitColumn[i] = 0;
@@ -2306,6 +2308,7 @@ bool PCML = true;//(K * M_in > 32*1024);
   }
   __syncthreads();
   }
+
 
   int TWC = (THRDS * _WvPrGrp * A_CHUNK);
   int TUC = (THRDS * UNRL * A_CHUNK);
@@ -2371,24 +2374,24 @@ bool PCML = true;//(K * M_in > 32*1024);
                 if (k1_ != 0) kBase += kFit;
 		//shflk = (kBase + kFit <= K); //don't shfl k (for hotspot avoidance) if this block doesn't cover full range
 		__syncthreads();
-                for (uint32_t m16 = 0; m16 < M_BLOCK/_WvPrGrp; m16++) {
-                 int m = threadIdx.y % M_BLOCK + m16*_WvPrGrp;
+                for (uint32_t m16 = 0; m16 < (M_BLOCK+_WvPrGrp-1)/_WvPrGrp; m16++) {
+			
+                 int m = (threadIdx.y % _WvPrGrp) + m16*_WvPrGrp;
+		 if (m >= M_BLOCK) break;
 
-                uint32_t offs_token[M_BLOCK];
-                bool token_mask[M_BLOCK];  // add to A[] /top_k*k
-                //for (uint32_t m=0; m<M_BLOCK; m++) {
-                  // get the list of Ms corresponding to this M_BLOCK
-                  offs_token[m] = sorted_token_ids[e*M_BLOCK+m];
-                  token_mask[m] = offs_token[m] < num_valid_tokens;
-                //}
+                uint32_t offs_token;
+                bool token_mask;  // add to A[] /top_k*k
+                offs_token = sorted_token_ids[e*M_BLOCK+m];
+                token_mask = offs_token < num_valid_tokens;
 
-                 if (token_mask[m])
+                 if (token_mask)
                  for (uint32_t k = 0; k < kFit; k += THRDS*A_CHUNK) {
-                    uint32_t kOff = k + ((((threadIdx.y/M_BLOCK) * THRDS + threadIdx.x) ) * A_CHUNK);    
+                    //uint32_t kOff = k + ((((threadIdx.y/M_BLOCK) * THRDS + threadIdx.x) ) * A_CHUNK);    
+                    uint32_t kOff = k + threadIdx.x * A_CHUNK;
                     if (kBase + kOff >= K) break;
                     if (kOff >= kFit) break;
 #ifdef USEMFMA
-                    uint32_t k_in = kBase + (offs_token[m]/top_k) * K + kOff;
+                    uint32_t k_in = kBase + (offs_token/top_k) * K + kOff;
                     uint32_t k_ot =         m * K + kOff; // yes, K should be kFit here. but we'lltranspose this below anyway
                     // Transpose A for MFMAs
 	            uint32_t k_in_x = (k_ot / A_CHUNK) % (K / A_CHUNK);
@@ -2410,7 +2413,7 @@ bool PCML = true;//(K * M_in > 32*1024);
                     //int m = threadIdx.x % M_BLOCK;
                     //for (uint32_t m = 0; m < M_BLOCK; m++) {
  	            //if (!token_mask[m]) continue;
-                    uint32_t k_in = kBase + (offs_token[m]/top_k) * K    + kOff;
+                    uint32_t k_in = kBase + (offs_token/top_k) * K    + kOff;
                     uint32_t k_ot =         m * kFit + kOff;
 		    *((bigType*)(&s[k_ot])) = *((bigType*)(&A[k_in]));
 		    //}
@@ -3341,18 +3344,19 @@ bool PCML = true;//(K * M_in > 32*1024);
 
     //That's enough walking K. Let's write this puppy out...
 #ifdef USEMFMA
+    if (n < N)
     for (int m16 = 0; m16 < M_BLOCK/mfmaTILEn; m16++) {
     //    if (threadIdx.x % mfmaTILEn == m % mfmaTILEn)
 	    int m = threadIdx.x % mfmaTILEn+m16*16;
 
-                uint32_t offs_token[M_BLOCK];
-                bool token_mask[M_BLOCK];  // add to A[] /top_k*k
+                uint32_t offs_token;
+                bool token_mask;  // add to A[] /top_k*k
                   // get the list of Ms corresponding to this M_BLOCK
-                  offs_token[m] = sorted_token_ids[e*M_BLOCK+m];
-                  token_mask[m] = offs_token[m] < num_valid_tokens;
+                  offs_token = sorted_token_ids[e*M_BLOCK+m];
+                  token_mask = offs_token < num_valid_tokens;
 
-	    if (token_mask[m]) {
-	      const int thisTokOff = offs_token[m];
+	    if (token_mask) {
+	      const int thisTokOff = offs_token;
               #pragma unroll 4
               for (int y = 0; y < 4; y++) {
   	        if (mul_routed_weight)
