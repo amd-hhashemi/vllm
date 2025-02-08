@@ -161,7 +161,7 @@ def apply_fp8_linear(
 
         if per_tensor_weights and per_tensor_activations:
             # Fused GEMM_DQ
-            output2 = None
+            # output2 = None
             n = qinput.shape[0]
             if n == 1:
                 weightT = weight.t()
