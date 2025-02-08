@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include <cuda_bf16.h>
 #include <stdexcept>
 #include <algorithm>
 #include "cuda_compat.h"
@@ -363,7 +364,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
                      const DTYPE* __restrict__ A, DTYPE* C,
                      const float* __restrict__ s_A,
                      const float* __restrict__ s_B, const int _WvPrGrp,
-                     const int CuCount) {
+                     const int Otp, const int CuCount) {
   using half8 =
       __attribute__((__vector_size__((A_CHUNK / 2) * sizeof(float)))) float;
   using intx2 = __attribute__((__vector_size__(2 * sizeof(int)))) int;
@@ -521,7 +522,11 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     if (threadIdx.x == 0) {
       for (int m = 0; m < M; m++) {
         for (int y = 0; y < YTILE; y++) {
-          C[n + y + m * N] = __float2half(sum[m][y][0] * sA * sB);
+          if (Otp == 0)  // fp16
+            C[n + y + m * N] = __float2half(sum[m][y][0] * sA * sB);
+          else  // if (Otp == 1) //bf16
+            *reinterpret_cast<__hip_bfloat16*>(&C[n + y + m * N]) =
+                __float2bfloat16(sum[m][y][0] * sA * sB);
         }
       }
     }
@@ -535,7 +540,8 @@ __global__ void wvSpltKQ_hf_sml_(const int K, const int Kp, const int N,
                                  const DTYPE* B, const DTYPE* __restrict__ A,
                                  DTYPE* C, const float* __restrict__ s_A,
                                  const float* __restrict__ s_B,
-                                 const int _WvPrGrp, const int CuCount) {
+                                 const int _WvPrGrp, const int Otp,
+                                 const int CuCount) {
   UNREACHABLE_CODE
 }
 #endif  // defined(__HIP__MI300_MI250__) TODO: Add NAVI support
@@ -546,7 +552,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     wvSpltKQ_hf_(const int K, const int Kp, const int N, const DTYPE* B,
                  const DTYPE* __restrict__ A, DTYPE* C,
                  const float* __restrict__ s_A, const float* __restrict__ s_B,
-                 const int _WvPrGrp, const int CuCount) {
+                 const int _WvPrGrp, const int Otp, const int CuCount) {
   using half8 =
       __attribute__((__vector_size__((A_CHUNK / 2) * sizeof(float)))) float;
   using intx2 = __attribute__((__vector_size__(2 * sizeof(int)))) int;
@@ -704,7 +710,11 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
     if (threadIdx.x == 0) {
       for (int m = 0; m < M; m++) {
         for (int y = 0; y < YTILE; y++) {
-          C[n + y + m * N] = __float2half(sum[m][y][0] * sA * sB);
+          if (Otp == 0)  // fp16
+            C[n + y + m * N] = __float2half(sum[m][y][0] * sA * sB);
+          else  // if (Otp == 12) //bf16
+            *reinterpret_cast<__hip_bfloat16*>(&C[n + y + m * N]) =
+                __float2bfloat16(sum[m][y][0] * sA * sB);
         }
       }
     }
@@ -718,7 +728,7 @@ __global__ void wvSpltKQ_hf_(const int K, const int Kp, const int N,
                              const DTYPE* B, const DTYPE* __restrict__ A,
                              DTYPE* C, const float* __restrict__ s_A,
                              const float* __restrict__ s_B, const int _WvPrGrp,
-                             const int CuCount) {
+                             const int Otp, const int CuCount) {
   UNREACHABLE_CODE
 }
 #endif  // defined(__HIP__MI300_MI250__) TODO: Add NAVI support
@@ -879,8 +889,8 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
         uint32_t k_ = k + threadIdx.x * A_CHUNK;
         if (k_ >= K) break;
-          // Do the matrix multiplication of activation and weight matrix
-          // - Remember the accumulation is happening for K-split of 64!
+        // Do the matrix multiplication of activation and weight matrix
+        // - Remember the accumulation is happening for K-split of 64!
   #pragma unroll
         for (uint32_t m = 0; m < M; m++) {
   #pragma unroll
@@ -1163,8 +1173,8 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
           uint32_t k = k1 + k2 * THRDS * A_CHUNK;
           uint32_t k_ = k + threadIdx.x * A_CHUNK;
           if (k_ >= K) break;
-            // Do the matrix multiplication of activation and weight matrix
-            // - Remember the accumulation is happening for K-split of 64!
+          // Do the matrix multiplication of activation and weight matrix
+          // - Remember the accumulation is happening for K-split of 64!
   #pragma unroll
           for (uint32_t b = 0; b < A_CHUNK / 2; b++) {
             asm("v_dot2c_f32_f16 %0, %2, %3"
@@ -1442,7 +1452,7 @@ __global__ void __launch_bounds__(WvPrGrp* THRDS)
       if (n >= N) continue;
   #endif
 
-        // Fetch the weight matrix from memory!
+      // Fetch the weight matrix from memory!
   #pragma unroll
       for (uint32_t k2 = 0; k2 < UNRL; k2++) {
         uint32_t k = k1 + k2 * THRDS * A_CHUNK;
@@ -1687,7 +1697,8 @@ void wvSpltK_(void* in_a, void* in_b, void* out_c, const int M_in,
 
 void wvSpltKQ_(void* in_a, void* in_b, void* out_c, void* scale_a,
                void* scale_b, const int M_in, const int K_in, const int Kp_in,
-               const int N_in, cudaStream_t stream, const int CuCount = 0) {
+               const int N_in, const int Otp_in, cudaStream_t stream,
+               const int CuCount = 0) {
   dim3 grid(CuCount);
   half* af4 = reinterpret_cast<half*>(in_a);
   const half* bf4 = reinterpret_cast<const half*>(in_b);
@@ -1703,12 +1714,12 @@ void wvSpltKQ_(void* in_a, void* in_b, void* out_c, void* scale_a,
       int __wvPrGrp = mindiv(M_in, CuCount * _YTILEs, _WvPrGrp);              \
       wvSpltKQ_hf_sml_<64, _YTILEs, _WvPrGrp, 16, _UNRLs, _N>                 \
           <<<grid, block, 0, stream>>>(K_in, Kp_in, M_in, af4, bf4, c, s_a,   \
-                                       s_b, __wvPrGrp, CuCount);              \
+                                       s_b, __wvPrGrp, Otp_in, CuCount);      \
     } else {                                                                  \
       int __wvPrGrp = mindiv(M_in, CuCount * _YTILEm, _WvPrGrp);              \
       wvSpltKQ_hf_<64, _YTILEm, _WvPrGrp, 8, _UNRLm, _N>                      \
           <<<grid, block, 0, stream>>>(K_in, Kp_in, M_in, af4, bf4, c, s_a,   \
-                                       s_b, __wvPrGrp, CuCount);              \
+                                       s_b, __wvPrGrp, Otp_in, CuCount);      \
     }                                                                         \
   }
 

@@ -5,7 +5,6 @@ from pathlib import Path
 import pandas as pd
 import torch
 import torch.nn.functional as F
-import traceback
 
 from vllm import _custom_ops as ops
 from vllm.envs import VLLM_USE_ROCM_SKINNY_GEMM
@@ -92,13 +91,23 @@ class TunedGemm:
         else:
             return None
 
-    def scaled_mm(self, inp, weight, out_dtype=None, scale_a=None, scale_b=None, bias=None): 
+    def scaled_mm(self,
+                  inp,
+                  weight,
+                  out_dtype=None,
+                  scale_a=None,
+                  scale_b=None,
+                  bias=None):
         out = torch.empty(inp.shape[0],
-                              weight.shape[0],
-                              dtype=out_dtype,
-                              device='cuda')
+                          weight.shape[0],
+                          dtype=out_dtype,
+                          device='cuda')
         n = inp.shape[0]
-        ops.wvSpltKQ(weight, inp, out, scale_a, scale_b, n, self.cu_count)
+
+        Otp = 1  #default bfloat16
+        if out_dtype == torch.float16:
+            Otp = 0
+        ops.wvSpltKQ(weight, inp, out, scale_a, scale_b, n, Otp, self.cu_count)
         return out
 
     def mm(self, inp, weights, bias=None):
