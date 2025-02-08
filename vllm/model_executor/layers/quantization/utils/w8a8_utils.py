@@ -188,9 +188,9 @@ def apply_fp8_linear(
             '''
             # A fix for discrepancy in scaled_mm which returns tuple
             # for torch < 2.5 and a single value in torch >= 2.5
-            if (weight.shape[0] == 1):
-                if type(output) is tuple and len(output) == 2:
-                    output = output[0]
+            if (weight.shape[0] == 1) and (type(output)
+                                           is tuple) and (len(output) == 2):
+                output = output[0]
 
             return torch.narrow(output, 0, 0,
                                 input_2d.shape[0]).view(*output_shape)
