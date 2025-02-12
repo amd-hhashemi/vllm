@@ -182,7 +182,7 @@ def apply_fp8_linear(
             atol = 1e-2; rtol = 1e-5
             if output2!=None :
                 if not torch.allclose(output,output2,atol=atol,rtol=rtol) :
-                    print("MISSMATCH")
+                    print("MISMATCH")
                     print("orig", output)
                     print("opt", output2)
             '''
