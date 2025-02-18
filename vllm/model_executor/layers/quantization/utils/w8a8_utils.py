@@ -172,7 +172,6 @@ def apply_fp8_linear(
 
         if per_tensor_weights and per_tensor_activations:
             # Fused GEMM_DQ
-            # output2 = None
             n = qinput.shape[0]
             if n == 1:
                 weightT = weight.t()
@@ -189,14 +188,7 @@ def apply_fp8_linear(
                                           scale_a=x_scale,
                                           scale_b=weight_scale,
                                           bias=bias)
-            '''
-            atol = 1e-2; rtol = 1e-5
-            if output2!=None :
-                if not torch.allclose(output,output2,atol=atol,rtol=rtol) :
-                    print("MISMATCH")
-                    print("orig", output)
-                    print("opt", output2)
-            '''
+
             # A fix for discrepancy in scaled_mm which returns tuple
             # for torch < 2.5 and a single value in torch >= 2.5
             if (weight.shape[0] == 1) and (type(output)
